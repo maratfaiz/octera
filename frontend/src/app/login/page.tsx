@@ -1,0 +1,76 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { ApiError, auth } from "@/lib/api";
+
+export default function LoginPage() {
+  const router = useRouter();
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      if (mode === "register") {
+        await auth.register(email, fullName, password);
+      }
+      await auth.login(email, password);
+      router.push("/dashboard");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось выполнить вход");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="container" style={{ maxWidth: 400, paddingTop: 80 }}>
+      <h1 style={{ marginBottom: 4 }}>OCTera</h1>
+      <p style={{ color: "var(--text-muted)", marginTop: 0 }}>
+        {mode === "login" ? "Вход в кабинет врача" : "Регистрация врача"}
+      </p>
+
+      <form onSubmit={handleSubmit} className="card">
+        {mode === "register" && (
+          <div className="form-row">
+            <label>ФИО</label>
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+          </div>
+        )}
+        <div className="form-row">
+          <label>Email</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </div>
+        <div className="form-row">
+          <label>Пароль</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            minLength={8}
+            required
+          />
+        </div>
+        {error && <div className="error">{error}</div>}
+        <button type="submit" disabled={loading} style={{ width: "100%", marginTop: 8 }}>
+          {loading ? "Подождите…" : mode === "login" ? "Войти" : "Зарегистрироваться"}
+        </button>
+      </form>
+
+      <button
+        className="secondary"
+        style={{ width: "100%" }}
+        onClick={() => setMode(mode === "login" ? "register" : "login")}
+      >
+        {mode === "login" ? "Нет аккаунта? Зарегистрироваться" : "Уже есть аккаунт? Войти"}
+      </button>
+    </div>
+  );
+}
