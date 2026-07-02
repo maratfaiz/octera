@@ -34,17 +34,9 @@ def _add_blob(img: np.ndarray, rng: np.random.Generator, cx: float, cy: float, r
 def _generate_sample(label: str, rng: np.random.Generator) -> np.ndarray:
     img = _base_layers(rng)
 
-    if label == "CNV":
-        cx, cy = rng.uniform(0.3, 0.7) * IMG_SIZE, rng.uniform(0.35, 0.55) * IMG_SIZE
-        img = _add_blob(img, rng, cx, cy, radius=rng.uniform(6, 10), intensity=rng.uniform(0.35, 0.5))
-    elif label == "DME":
+    if label == "DME":
         cx, cy = rng.uniform(0.3, 0.7) * IMG_SIZE, rng.uniform(0.4, 0.6) * IMG_SIZE
         img = _add_blob(img, rng, cx, cy, radius=rng.uniform(14, 20), intensity=-rng.uniform(0.3, 0.45))
-    elif label == "DRUSEN":
-        for _ in range(rng.integers(4, 8)):
-            cx = rng.uniform(0.1, 0.9) * IMG_SIZE
-            cy = rng.uniform(0.55, 0.7) * IMG_SIZE
-            img = _add_blob(img, rng, cx, cy, radius=rng.uniform(3, 6), intensity=rng.uniform(0.35, 0.55))
     # NORMAL: base layers only.
 
     img = np.clip(img, 0, 1)

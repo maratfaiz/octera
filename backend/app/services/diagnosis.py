@@ -1,17 +1,20 @@
 """Diagnosis module.
 
-Runs the trained classifier from app/ml/ over the four disease categories
-covered by the Kermany OCT2017 dataset layout: NORMAL, CNV (choroidal
-neovascularization), DME (diabetic macular edema) and DRUSEN. Falls back to
-a deterministic pseudo-random stub when no trained checkpoint is present, so
-the API keeps working end to end without the ML dependency wired up.
+Runs the trained classifier from app/ml/ to detect diabetic macular edema
+(DME) vs. no DME. Falls back to a deterministic pseudo-random stub when no
+trained checkpoint is present, so the API keeps working end to end without
+the ML dependency wired up.
 
-The checkpoint shipped in app/ml/artifacts/ was trained on synthetic
-procedural images (see app/ml/synthetic_dataset.py) as a smoke test of the
-pipeline only -- it is NOT trained on real patient data and must not be used
-for anything beyond demonstrating the mechanism. Retrain on a real dataset
-via `python -m app.ml.train --data-dir <path-to-kermany-oct2017>` before
-relying on its output.
+The shipped checkpoint (app/ml/artifacts/oct_classifier.joblib) is trained
+on the "Dataset of Eye Fundus and OCT Images for the study of Diabetic
+Macular Edema and Diabetic Retinopathy" (Hughes Cano, Olivares Pinto &
+Thebault -- CONACYT/UNAM/IMO/APEC/INDEREB), i.e. real de-identified patient
+OCT scans with DME diagnosed by retinal ophthalmologists -- not synthetic
+data. That said, it is a simple pixel-downscale + shallow classifier
+trained on ~1,100 images from one study; it has NOT gone through clinical
+validation and must not be used for anything beyond demonstrating the
+mechanism. See app/ml/train.py and app/ml/artifacts/metrics.json for
+training details and measured accuracy.
 """
 
 import hashlib
@@ -24,9 +27,7 @@ from app.ml.model import DEFAULT_CHECKPOINT_PATH
 
 CLASS_LABELS_RU = {
     "NORMAL": "Без признаков патологии",
-    "CNV": "Хориоидальная неоваскуляризация",
     "DME": "Диабетический макулярный отек",
-    "DRUSEN": "Друзы (ранняя возрастная макулярная дегенерация)",
 }
 
 

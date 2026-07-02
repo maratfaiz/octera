@@ -3,12 +3,9 @@ from app.services.report_generator import generate_report
 
 
 def _diagnoses(top_probability: float) -> list[Diagnosis]:
-    remainder = (1 - top_probability) / 3
     return [
         Diagnosis(code="DME", label="Диабетический макулярный отек", probability=top_probability),
-        Diagnosis(code="CNV", label="Хориоидальная неоваскуляризация", probability=remainder),
-        Diagnosis(code="DRUSEN", label="Друзы", probability=remainder),
-        Diagnosis(code="NORMAL", label="Без признаков патологии", probability=remainder),
+        Diagnosis(code="NORMAL", label="Без признаков патологии", probability=1 - top_probability),
     ]
 
 
@@ -39,9 +36,7 @@ def test_low_confidence_finding_adds_warning():
 def test_normal_case_recommends_routine_followup():
     diagnoses = [
         Diagnosis(code="NORMAL", label="Без признаков патологии", probability=0.9),
-        Diagnosis(code="CNV", label="Хориоидальная неоваскуляризация", probability=0.05),
-        Diagnosis(code="DME", label="Диабетический макулярный отек", probability=0.03),
-        Diagnosis(code="DRUSEN", label="Друзы", probability=0.02),
+        Diagnosis(code="DME", label="Диабетический макулярный отек", probability=0.1),
     ]
     report = generate_report(
         quality_score=0.9, quality_issues=[], layer_thickness_um={"rpe": 40.0}, diagnoses=diagnoses

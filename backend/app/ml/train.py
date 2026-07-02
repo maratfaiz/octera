@@ -1,22 +1,33 @@
 """Trains the OCTera diagnosis classifier.
 
 Without --data-dir, trains on procedurally generated synthetic images as a
-smoke test of the pipeline only -- the resulting checkpoint is NOT clinically
-valid. Point --data-dir at a Kermany OCT2017-style layout
-(``<data-dir>/train/<CLASS>/*.jpeg`` with CLASS in NORMAL/CNV/DME/DRUSEN,
-e.g. https://www.kaggle.com/datasets/paultimothymooney/kermany2018) to train
-on real data.
+smoke test of the pipeline only -- the resulting checkpoint is NOT trained on
+real patients. Point --data-dir at a local checkout of the "Dataset of Eye
+Fundus and OCT Images for the study of Diabetic Macular Edema and Diabetic
+Retinopathy" (Hughes Cano, Olivares Pinto & Thebault; CONACYT/UNAM/IMO/APEC/
+INDEREB) to train on real, ophthalmologist-labeled OCT scans:
+
+    git clone https://github.com/Traslational-Visual-Health-Laboratory/OCT-AND-EYE-FUNDUS-DATASET.git
+    python -m app.ml.train --data-dir /path/to/OCT-AND-EYE-FUNDUS-DATASET
+
+That repository's root must contain OCT.csv and an OCT/ directory (OCT1..OCTn
+subfolders of .jpg files) -- the layout is used as-is, no restructuring
+needed. Labels come from OCT.csv's DME column (1 -> DME, 0 -> NORMAL); this
+dataset does not label CNV/DRUSEN, which is why the classifier only covers
+NORMAL/DME.
 
 Picks the best of a few candidate scikit-learn classifiers via cross-
-validation, then reports held-out test metrics and writes a model-card
-JSON (metrics.json) alongside the checkpoint.
+validation (balanced accuracy, since DME is a minority class in this
+dataset), then reports held-out test metrics and writes a model-card JSON
+(metrics.json) alongside the checkpoint.
 
 Usage:
-    python -m app.ml.train --data-dir /path/to/OCT2017
+    python -m app.ml.train --data-dir /path/to/OCT-AND-EYE-FUNDUS-DATASET
     python -m app.ml.train  # synthetic smoke test
 """
 
 import argparse
+import csv
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,22 +53,36 @@ def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
         "mlp_64": MLPClassifier(
             hidden_layer_sizes=(64,), activation="relu", alpha=1e-4, max_iter=600, random_state=random_state
         ),
-        "random_forest": RandomForestClassifier(n_estimators=200, random_state=random_state),
-        "svm_rbf": SVC(kernel="rbf", probability=True, random_state=random_state),
+        "random_forest": RandomForestClassifier(
+            n_estimators=200, class_weight="balanced", random_state=random_state
+        ),
+        "svm_rbf": SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
     }
 
 
 def _load_real_dataset(data_dir: str) -> tuple[list[np.ndarray], list[str]]:
+    """Loads the OCT-AND-EYE-FUNDUS-DATASET layout: <data_dir>/OCT.csv +
+    <data_dir>/OCT/OCT*/<Name>.jpg, labeled by the CSV's DME column.
+    """
+    root = Path(data_dir)
+    csv_path = root / "OCT.csv"
+    if not csv_path.exists():
+        raise SystemExit(
+            f"Expected {csv_path} -- pass --data-dir at a checkout of "
+            "github.com/Traslational-Visual-Health-Laboratory/OCT-AND-EYE-FUNDUS-DATASET"
+        )
+
+    image_index = {p.stem: p for p in root.glob("OCT/OCT*/*.jpg")}
+
     images: list[np.ndarray] = []
     labels: list[str] = []
-    root = Path(data_dir) / "train"
-    for cls in CLASSES:
-        folder = root / cls
-        if not folder.exists():
-            continue
-        for file in list(folder.glob("*.jpeg")) + list(folder.glob("*.jpg")) + list(folder.glob("*.png")):
-            images.append(np.array(Image.open(file)))
-            labels.append(cls)
+    with csv_path.open(newline="", encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            path = image_index.get(row["Name"])
+            if path is None:
+                continue
+            images.append(np.array(Image.open(path).convert("L")))
+            labels.append("DME" if row["DME"].strip() == "1" else "NORMAL")
     return images, labels
 
 
@@ -65,9 +90,9 @@ def select_best_model(X: np.ndarray, y: np.ndarray, cv_folds: int = 4) -> tuple[
     cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     scores: dict[str, float] = {}
     for name, estimator in _candidate_estimators().items():
-        fold_scores = cross_val_score(estimator, X, y, cv=cv, scoring="accuracy")
+        fold_scores = cross_val_score(estimator, X, y, cv=cv, scoring="balanced_accuracy")
         scores[name] = float(fold_scores.mean())
-        print(f"  {name}: cv accuracy = {fold_scores.mean():.3f} (+/- {fold_scores.std():.3f})")
+        print(f"  {name}: cv balanced accuracy = {fold_scores.mean():.3f} (+/- {fold_scores.std():.3f})")
 
     best_name = max(scores, key=scores.get)
     return best_name, _candidate_estimators()[best_name], scores
@@ -75,7 +100,7 @@ def select_best_model(X: np.ndarray, y: np.ndarray, cv_folds: int = 4) -> tuple[
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--data-dir", type=str, default=None, help="Path to a Kermany OCT2017-style dataset")
+    parser.add_argument("--data-dir", type=str, default=None, help="Path to a OCT-AND-EYE-FUNDUS-DATASET checkout")
     parser.add_argument("--synthetic-per-class", type=int, default=250)
     parser.add_argument("--no-augment", action="store_true", help="Disable augmentation of synthetic images")
     parser.add_argument("--out", type=str, default=str(DEFAULT_CHECKPOINT_PATH))
@@ -84,13 +109,13 @@ def main() -> None:
     if args.data_dir:
         raw_images, labels = _load_real_dataset(args.data_dir)
         if not raw_images:
-            raise SystemExit(f"No images found under {args.data_dir}/train/<CLASS>/")
-        data_source = f"real:{args.data_dir}"
+            raise SystemExit(f"No images matched between OCT.csv and OCT/OCT*/*.jpg under {args.data_dir}")
+        data_source = "real:OCT-AND-EYE-FUNDUS-DATASET"
         print(f"Loaded {len(raw_images)} real images from {args.data_dir}")
     else:
         print(
             "No --data-dir given: training on synthetic procedural data. "
-            "This checkpoint is a pipeline smoke test only and is NOT clinically valid."
+            "This checkpoint is a pipeline smoke test only and is NOT trained on real patients."
         )
         data_source = "synthetic"
         raw_images, labels = generate_dataset(n_per_class=args.synthetic_per_class, augment=not args.no_augment)
@@ -102,7 +127,7 @@ def main() -> None:
 
     print("Selecting best model via cross-validation on the training split:")
     best_name, best_estimator, cv_scores = select_best_model(X_train, y_train)
-    print(f"Selected: {best_name} (cv accuracy = {cv_scores[best_name]:.3f})")
+    print(f"Selected: {best_name} (cv balanced accuracy = {cv_scores[best_name]:.3f})")
 
     model = OCTClassifier(best_estimator)
     model.fit(X_train, y_train)
@@ -122,11 +147,11 @@ def main() -> None:
         "n_samples": len(raw_images),
         "classes": CLASSES,
         "selected_model": best_name,
-        "cv_accuracy_by_model": cv_scores,
+        "cv_balanced_accuracy_by_model": cv_scores,
         "test_accuracy": test_accuracy,
         "classification_report": report,
         "confusion_matrix": confusion_matrix(y_test, preds, labels=CLASSES).tolist(),
-        "clinically_valid": data_source != "synthetic",
+        "trained_on_real_patient_data": data_source != "synthetic",
     }
     metrics_path = Path(args.out).with_name("metrics.json")
     metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False))

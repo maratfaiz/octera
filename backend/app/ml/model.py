@@ -7,7 +7,7 @@ import joblib
 import numpy as np
 from sklearn.neural_network import MLPClassifier
 
-CLASSES = ["NORMAL", "CNV", "DME", "DRUSEN"]
+CLASSES = ["NORMAL", "DME"]
 
 DEFAULT_CHECKPOINT_PATH = Path(__file__).resolve().parent / "artifacts" / "oct_classifier.joblib"
 
