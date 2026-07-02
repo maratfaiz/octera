@@ -16,6 +16,7 @@ def generate_report(
     quality_issues: list[str],
     layer_thickness_um: dict[str, float],
     diagnoses: list[Diagnosis],
+    pathology_zone_count: int = 0,
 ) -> str:
     lines = ["Автоматическое заключение по результатам ОКТ-исследования (предварительное, требует подтверждения врачом).", ""]
 
@@ -30,6 +31,14 @@ def generate_report(
     for layer, value in layer_thickness_um.items():
         lines.append(f"  - {layer}: {value}")
     lines.append("")
+
+    if pathology_zone_count > 0:
+        lines.append(
+            f"Алгоритм выделил {pathology_zone_count} гипорефлективных (тёмных) зон на снимке — "
+            "это не диагноз, а автоматически найденные участки, требующие визуальной проверки врачом "
+            "(могут быть жидкостью, кистой, отслойкой или артефактом снимка)."
+        )
+        lines.append("")
 
     top = diagnoses[0] if diagnoses else None
     lines.append("Вероятные диагнозы:")

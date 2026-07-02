@@ -268,8 +268,18 @@ button.secondary {
   align-items: start;
 }
 
+.image-panels {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
 @media (max-width: 800px) {
   .results-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .image-panels {
     grid-template-columns: 1fr;
   }
 }

@@ -27,6 +27,8 @@ export interface AnalysisResult {
   quality_issues: string[];
   segmentation_map_path: string | null;
   layer_thickness: Record<string, number>;
+  pathology_map_path: string | null;
+  pathology_zone_count: number;
   diagnoses: Diagnosis[];
   report_text: string;
   created_at: string;

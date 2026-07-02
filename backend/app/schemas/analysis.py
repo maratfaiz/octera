@@ -16,6 +16,8 @@ class AnalysisResultRead(BaseModel):
     quality_issues: list[str]
     segmentation_map_path: str | None
     layer_thickness: dict[str, float]
+    pathology_map_path: str | None
+    pathology_zone_count: int
     diagnoses: list[Diagnosis]
     report_text: str
     created_at: datetime

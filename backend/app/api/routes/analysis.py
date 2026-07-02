@@ -98,3 +98,16 @@ def get_segmentation_map(
     if not result or not result.segmentation_map_path or not Path(result.segmentation_map_path).exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Карта сегментации не найдена")
     return FileResponse(result.segmentation_map_path)
+
+
+@router.get("/{study_id}/pathology-map")
+def get_pathology_map(
+    study_id: str,
+    db: Session = Depends(get_db),
+    patient: Patient = Depends(get_current_patient),
+) -> FileResponse:
+    study = _get_own_study(study_id, patient, db)
+    result = db.query(AnalysisResult).filter(AnalysisResult.study_id == study.id).first()
+    if not result or not result.pathology_map_path or not Path(result.pathology_map_path).exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Карта патологий не найдена")
+    return FileResponse(result.pathology_map_path)

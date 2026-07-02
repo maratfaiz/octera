@@ -25,6 +25,8 @@ def run_analysis_pipeline(image_path: str) -> dict[str, Any]:
             "quality_issues": quality.issues,
             "segmentation_map_path": None,
             "layer_thickness": {},
+            "pathology_map_path": None,
+            "pathology_zone_count": 0,
             "diagnoses": [],
             "report_text": (
                 "Качество снимка недостаточно для автоматического анализа. "
@@ -38,6 +40,7 @@ def run_analysis_pipeline(image_path: str) -> dict[str, Any]:
         quality_score=quality.score,
         quality_issues=quality.issues,
         layer_thickness_um=segmentation.layer_thickness_um,
+        pathology_zone_count=segmentation.pathology_zone_count,
         diagnoses=diagnoses,
     )
 
@@ -46,6 +49,8 @@ def run_analysis_pipeline(image_path: str) -> dict[str, Any]:
         "quality_issues": quality.issues,
         "segmentation_map_path": segmentation.map_path,
         "layer_thickness": segmentation.layer_thickness_um,
+        "pathology_map_path": segmentation.pathology_map_path,
+        "pathology_zone_count": segmentation.pathology_zone_count,
         "diagnoses": [d.__dict__ for d in diagnoses],
         "report_text": report_text,
     }

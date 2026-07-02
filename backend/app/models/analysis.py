@@ -20,6 +20,9 @@ class AnalysisResult(Base):
     segmentation_map_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     layer_thickness: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    pathology_map_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    pathology_zone_count: Mapped[int] = mapped_column(default=0)
+
     diagnoses: Mapped[list] = mapped_column(JSON, default=list)  # [{code, label, probability}]
 
     report_text: Mapped[str] = mapped_column(Text, default="")

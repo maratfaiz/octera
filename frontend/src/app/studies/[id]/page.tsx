@@ -15,6 +15,7 @@ export default function StudyPage() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [segmentationUrl, setSegmentationUrl] = useState<string | null>(null);
+  const [pathologyUrl, setPathologyUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +38,9 @@ export default function StudyPage() {
         setResult(r);
         if (r.segmentation_map_path) {
           setSegmentationUrl(await fetchImageObjectUrl(`/api/v1/analysis/${id}/segmentation-map`));
+        }
+        if (r.pathology_map_path) {
+          setPathologyUrl(await fetchImageObjectUrl(`/api/v1/analysis/${id}/pathology-map`));
         }
       }
     } catch (err) {
@@ -63,7 +67,7 @@ export default function StudyPage() {
 
           {!loading && <div className="results-grid">
             <div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              <div className="image-panels">
                 <div className="card">
                   <p className="card-title">Исходное изображение</p>
                   {imageUrl ? (
@@ -78,6 +82,24 @@ export default function StudyPage() {
                   {segmentationUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={segmentationUrl} alt="Карта сегментации" style={{ width: "100%", borderRadius: 8 }} />
+                  ) : (
+                    <p style={{ color: "var(--text-muted)" }}>
+                      {study?.status === "completed" ? "Недоступна" : "Ожидает завершения анализа"}
+                    </p>
+                  )}
+                </div>
+                <div className="card">
+                  <p className="card-title">Карта патологий</p>
+                  {pathologyUrl ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={pathologyUrl} alt="Карта патологий" style={{ width: "100%", borderRadius: 8 }} />
+                      <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                        {result && result.pathology_zone_count > 0
+                          ? `Алгоритм отметил ${result.pathology_zone_count} зон(ы) — требуют проверки врачом, это не диагноз.`
+                          : "Выраженных гипорефлективных зон не найдено."}
+                      </p>
+                    </>
                   ) : (
                     <p style={{ color: "var(--text-muted)" }}>
                       {study?.status === "completed" ? "Недоступна" : "Ожидает завершения анализа"}
