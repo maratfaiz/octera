@@ -33,7 +33,7 @@ def run_analysis_pipeline(image_path: str) -> dict[str, Any]:
         }
 
     segmentation = segment_layers(image_path)
-    diagnoses = predict_diagnoses(image_path, segmentation.layer_thickness_um)
+    diagnoses = predict_diagnoses(image_path)
     report_text = generate_report(
         quality_score=quality.score,
         quality_issues=quality.issues,

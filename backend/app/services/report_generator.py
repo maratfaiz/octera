@@ -35,7 +35,7 @@ def generate_report(
         lines.append(f"  - {d.label}: {d.probability * 100:.1f}%")
     lines.append("")
 
-    if top and top.code != "normal":
+    if top and top.code != "NORMAL":
         lines.append(
             f"Наиболее вероятная находка: {top.label} (уверенность модели {top.probability * 100:.1f}%). "
             "Рекомендуется очная консультация офтальмолога для подтверждения диагноза."
