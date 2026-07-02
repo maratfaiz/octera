@@ -1,4 +1,4 @@
-import type { AnalysisResult, Study, User } from "./types";
+import type { AnalysisResult, AnalysisSummary, Study, User } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "octera_token";
@@ -86,6 +86,7 @@ export const studies = {
 export const analysis = {
   run: (studyId: string) => request<AnalysisResult>(`/api/v1/analysis/${studyId}/run`, { method: "POST" }),
   get: (studyId: string) => request<AnalysisResult>(`/api/v1/analysis/${studyId}`),
+  history: () => request<AnalysisSummary[]>("/api/v1/analysis"),
 };
 
 export async function fetchImageObjectUrl(path: string): Promise<string> {

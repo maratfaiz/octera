@@ -21,3 +21,12 @@ class AnalysisResultRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class AnalysisSummary(BaseModel):
+    study_id: str
+    created_at: datetime
+    quality_score: float
+    top_diagnosis: Diagnosis | None
+
+    model_config = {"from_attributes": True}

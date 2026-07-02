@@ -31,3 +31,10 @@ export interface AnalysisResult {
   report_text: string;
   created_at: string;
 }
+
+export interface AnalysisSummary {
+  study_id: string;
+  created_at: string;
+  quality_score: number;
+  top_diagnosis: Diagnosis | null;
+}

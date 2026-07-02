@@ -9,7 +9,7 @@ from app.db.session import get_db
 from app.models.analysis import AnalysisResult
 from app.models.patient import Patient
 from app.models.study import Study
-from app.schemas.analysis import AnalysisResultRead
+from app.schemas.analysis import AnalysisResultRead, AnalysisSummary
 from app.services.pipeline import run_analysis_pipeline
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -20,6 +20,29 @@ def _get_own_study(study_id: str, patient: Patient, db: Session) -> Study:
     if not study or study.patient_id != patient.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Исследование не найдено")
     return study
+
+
+@router.get("", response_model=list[AnalysisSummary])
+def list_analysis_history(
+    db: Session = Depends(get_db),
+    patient: Patient = Depends(get_current_patient),
+) -> list[AnalysisSummary]:
+    results = (
+        db.query(AnalysisResult)
+        .join(Study, Study.id == AnalysisResult.study_id)
+        .filter(Study.patient_id == patient.id)
+        .order_by(AnalysisResult.created_at.asc())
+        .all()
+    )
+    return [
+        AnalysisSummary(
+            study_id=r.study_id,
+            created_at=r.created_at,
+            quality_score=r.quality_score,
+            top_diagnosis=r.diagnoses[0] if r.diagnoses else None,
+        )
+        for r in results
+    ]
 
 
 @router.post("/{study_id}/run", response_model=AnalysisResultRead, status_code=status.HTTP_201_CREATED)

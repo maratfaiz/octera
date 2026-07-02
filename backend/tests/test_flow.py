@@ -69,6 +69,26 @@ def test_full_flow(client):
     assert fetched.status_code == 200
 
 
+def test_analysis_history_lists_own_results_only(client):
+    headers_a = _register_and_login(client, email="history_a@example.com")
+    headers_b = _register_and_login(client, email="history_b@example.com")
+
+    study_resp = _upload_test_study(client, headers_a)
+    study_id = study_resp.json()["id"]
+    client.post(f"/api/v1/analysis/{study_id}/run", headers=headers_a)
+
+    resp_a = client.get("/api/v1/analysis", headers=headers_a)
+    assert resp_a.status_code == 200
+    history = resp_a.json()
+    assert len(history) == 1
+    assert history[0]["study_id"] == study_id
+    assert "top_diagnosis" in history[0]
+
+    resp_b = client.get("/api/v1/analysis", headers=headers_b)
+    assert resp_b.status_code == 200
+    assert resp_b.json() == []
+
+
 def test_users_cannot_access_each_others_studies(client):
     headers_a = _register_and_login(client, email="user_a@example.com")
     headers_b = _register_and_login(client, email="user_b@example.com")
