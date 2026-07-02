@@ -1,0 +1,85 @@
+{
+  "trained_at": "2026-07-02T12:21:28.847259+00:00",
+  "data_source": "synthetic",
+  "n_samples": 1000,
+  "classes": [
+    "NORMAL",
+    "CNV",
+    "DME",
+    "DRUSEN"
+  ],
+  "selected_model": "mlp_64",
+  "cv_accuracy_by_model": {
+    "mlp_128_64": 0.8262499999999999,
+    "mlp_64": 0.9025,
+    "random_forest": 0.7424999999999999,
+    "svm_rbf": 0.76125
+  },
+  "test_accuracy": 0.86,
+  "classification_report": {
+    "CNV": {
+      "precision": 0.9583333333333334,
+      "recall": 0.92,
+      "f1-score": 0.9387755102040817,
+      "support": 50.0
+    },
+    "DME": {
+      "precision": 1.0,
+      "recall": 0.96,
+      "f1-score": 0.9795918367346939,
+      "support": 50.0
+    },
+    "DRUSEN": {
+      "precision": 0.9090909090909091,
+      "recall": 0.6,
+      "f1-score": 0.7228915662650602,
+      "support": 50.0
+    },
+    "NORMAL": {
+      "precision": 0.676056338028169,
+      "recall": 0.96,
+      "f1-score": 0.7933884297520661,
+      "support": 50.0
+    },
+    "accuracy": 0.86,
+    "macro avg": {
+      "precision": 0.8858701451131029,
+      "recall": 0.86,
+      "f1-score": 0.8586618357389755,
+      "support": 200.0
+    },
+    "weighted avg": {
+      "precision": 0.8858701451131029,
+      "recall": 0.86,
+      "f1-score": 0.8586618357389755,
+      "support": 200.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      48,
+      2,
+      0,
+      0
+    ],
+    [
+      2,
+      46,
+      0,
+      2
+    ],
+    [
+      1,
+      0,
+      48,
+      1
+    ],
+    [
+      20,
+      0,
+      0,
+      30
+    ]
+  ],
+  "clinically_valid": false
+}

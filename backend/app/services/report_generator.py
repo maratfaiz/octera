@@ -8,6 +8,8 @@ introduce findings that are not present in the input.
 
 from app.services.diagnosis import Diagnosis
 
+LOW_CONFIDENCE_THRESHOLD = 0.5
+
 
 def generate_report(
     quality_score: float,
@@ -42,5 +44,13 @@ def generate_report(
         )
     else:
         lines.append("Признаков патологии с высокой вероятностью не обнаружено. Рекомендовано плановое наблюдение.")
+
+    if top and top.probability < LOW_CONFIDENCE_THRESHOLD:
+        lines.append("")
+        lines.append(
+            "Внимание: уверенность модели в наиболее вероятном диагнозе низкая "
+            f"({top.probability * 100:.1f}%). Результат недостаточно надежен для самостоятельных "
+            "клинических выводов — необходим приоритетный ручной просмотр врачом."
+        )
 
     return "\n".join(lines)

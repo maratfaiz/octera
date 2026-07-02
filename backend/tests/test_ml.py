@@ -5,6 +5,7 @@ from sklearn.model_selection import train_test_split
 from app.ml.features import extract_features
 from app.ml.model import CLASSES, OCTClassifier
 from app.ml.synthetic_dataset import generate_dataset
+from app.ml.train import select_best_model
 from app.services.diagnosis import predict_diagnoses
 
 
@@ -20,6 +21,18 @@ def test_synthetic_training_beats_random_chance():
     accuracy = model.clf.score(X_test, y_test)
 
     assert accuracy > 1 / len(CLASSES) + 0.2
+
+
+def test_select_best_model_picks_a_valid_candidate():
+    raw_images, labels = generate_dataset(n_per_class=30, seed=2)
+    X = np.stack([extract_features(Image.fromarray(img)) for img in raw_images])
+    y = np.array(labels)
+
+    best_name, best_estimator, scores = select_best_model(X, y, cv_folds=3)
+
+    assert best_name in scores
+    assert scores[best_name] == max(scores.values())
+    assert best_estimator is not None
 
 
 def test_predict_diagnoses_uses_shipped_checkpoint(tmp_path):
