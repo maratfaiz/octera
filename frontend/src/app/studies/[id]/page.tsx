@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ApiError, analysis, fetchImageObjectUrl, getToken, studies } from "@/lib/api";
 import type { AnalysisResult, Study } from "@/lib/types";
-import { Topbar } from "@/components/Topbar";
+import { Sidebar } from "@/components/Sidebar";
 
 export default function StudyPage() {
   const { id } = useParams<{ id: string }>();
@@ -44,86 +44,102 @@ export default function StudyPage() {
   }
 
   return (
-    <>
-      <Topbar />
-      <div className="container">
-        <Link href="/dashboard">← Мои исследования</Link>
-        <h2>Результаты исследования</h2>
-        {error && <div className="error">{error}</div>}
+    <div className="app-shell">
+      <Sidebar />
+      <div className="main-content">
+        <div className="container">
+          <Link href="/history">← История</Link>
+          <h2>Результаты исследования</h2>
+          {error && <div className="error">{error}</div>}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <div className="card">
-            <p className="card-title">Исходное изображение</p>
-            {imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={imageUrl} alt="ОКТ-снимок" style={{ width: "100%", borderRadius: 8 }} />
-            ) : (
-              <p style={{ color: "var(--text-muted)" }}>Загрузка…</p>
-            )}
-          </div>
-          <div className="card">
-            <p className="card-title">Тепловая карта / сегментация</p>
-            {segmentationUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={segmentationUrl} alt="Карта сегментации" style={{ width: "100%", borderRadius: 8 }} />
-            ) : (
-              <p style={{ color: "var(--text-muted)" }}>
-                {study?.status === "completed" ? "Недоступна" : "Ожидает завершения анализа"}
-              </p>
-            )}
-          </div>
-        </div>
+          <div className="results-grid">
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div className="card">
+                  <p className="card-title">Исходное изображение</p>
+                  {imageUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={imageUrl} alt="ОКТ-снимок" style={{ width: "100%", borderRadius: 8 }} />
+                  ) : (
+                    <p style={{ color: "var(--text-muted)" }}>Загрузка…</p>
+                  )}
+                </div>
+                <div className="card">
+                  <p className="card-title">Карта внимания AI</p>
+                  {segmentationUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={segmentationUrl} alt="Карта сегментации" style={{ width: "100%", borderRadius: 8 }} />
+                  ) : (
+                    <p style={{ color: "var(--text-muted)" }}>
+                      {study?.status === "completed" ? "Недоступна" : "Ожидает завершения анализа"}
+                    </p>
+                  )}
+                </div>
+              </div>
 
-        {result && (
-          <>
-            <div className="card">
-              <p className="card-title">Качество изображения</p>
-              <p>{(result.quality_score * 100).toFixed(0)}%</p>
-              {result.quality_issues.length > 0 && (
-                <p style={{ color: "var(--text-muted)" }}>Проблемы: {result.quality_issues.join(", ")}</p>
+              {result && (
+                <>
+                  <div className="card">
+                    <p className="card-title">Толщина слоев сетчатки (мкм)</p>
+                    {Object.entries(result.layer_thickness).map(([layer, value]) => (
+                      <div key={layer} className="list-item">
+                        <span>{layer}</span>
+                        <span>{value}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="card">
+                    <p className="card-title">AI-заключение</p>
+                    <p className="report-text">{result.report_text}</p>
+                  </div>
+                </>
+              )}
+
+              {study && study.status !== "completed" && !error && (
+                <div className="card">
+                  <p style={{ color: "var(--text-muted)" }}>
+                    Статус исследования: {study.status}. Результаты анализа появятся после завершения обработки.
+                  </p>
+                </div>
               )}
             </div>
 
-            <div className="card">
-              <p className="card-title">Толщина слоев сетчатки (мкм)</p>
-              {Object.entries(result.layer_thickness).map(([layer, value]) => (
-                <div key={layer} className="list-item">
-                  <span>{layer}</span>
-                  <span>{value}</span>
+            <div>
+              {result && (
+                <div className="card">
+                  <p className="card-title">Качество изображения</p>
+                  <p style={{ fontSize: 28, fontWeight: 700, margin: "0 0 4px" }}>
+                    {(result.quality_score * 100).toFixed(0)}%
+                  </p>
+                  {result.quality_issues.length > 0 && (
+                    <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
+                      Проблемы: {result.quality_issues.join(", ")}
+                    </p>
+                  )}
                 </div>
-              ))}
-            </div>
+              )}
 
-            <div className="card">
-              <p className="card-title">Вероятности заболеваний</p>
-              {result.diagnoses.map((d) => (
-                <div key={d.code} style={{ marginBottom: 12 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span>{d.label}</span>
-                    <span>{(d.probability * 100).toFixed(1)}%</span>
-                  </div>
-                  <div className="diagnosis-bar">
-                    <div className="diagnosis-bar-fill" style={{ width: `${d.probability * 100}%` }} />
-                  </div>
+              {result && (
+                <div className="card">
+                  <p className="card-title">Вероятность заболеваний</p>
+                  {result.diagnoses.map((d) => (
+                    <div key={d.code} style={{ marginBottom: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                        <span>{d.label}</span>
+                        <span>{(d.probability * 100).toFixed(1)}%</span>
+                      </div>
+                      <div className="diagnosis-bar">
+                        <div className="diagnosis-bar-fill" style={{ width: `${d.probability * 100}%` }} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-
-            <div className="card">
-              <p className="card-title">AI-заключение</p>
-              <p className="report-text">{result.report_text}</p>
-            </div>
-          </>
-        )}
-
-        {study && study.status !== "completed" && !error && (
-          <div className="card">
-            <p style={{ color: "var(--text-muted)" }}>
-              Статус исследования: {study.status}. Результаты анализа появятся после завершения обработки.
-            </p>
           </div>
-        )}
+        </div>
       </div>
-    </>
+    </div>
   );
 }

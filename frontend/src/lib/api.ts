@@ -53,6 +53,7 @@ export const auth = {
     setToken(data.access_token);
     return data;
   },
+  me: () => request<User>("/api/v1/auth/me"),
 };
 
 export const studies = {

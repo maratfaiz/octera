@@ -29,7 +29,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "version": settings.app_version}
 
 
 app.include_router(auth.router, prefix=settings.api_v1_prefix)

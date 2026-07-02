@@ -28,7 +28,19 @@ def _upload_test_study(client, headers):
 def test_health(client):
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json()["status"] == "ok"
+    assert "version" in resp.json()
+
+
+def test_me_returns_current_user(client):
+    headers = _register_and_login(client, email="me_test@example.com")
+
+    resp = client.get("/api/v1/auth/me", headers=headers)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["email"] == "me_test@example.com"
+    assert body["full_name"] == "Ivan Petrov"
 
 
 def test_registration_auto_creates_own_patient_profile(client):
