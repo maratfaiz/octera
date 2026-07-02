@@ -15,7 +15,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(32), default="doctor")
+    role: Mapped[str] = mapped_column(String(32), default="user")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    patients: Mapped[list["Patient"]] = relationship(back_populates="created_by", cascade="all, delete-orphan")
+    patient: Mapped["Patient"] = relationship(back_populates="created_by", cascade="all, delete-orphan", uselist=False)

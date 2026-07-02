@@ -3,58 +3,59 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ApiError, getToken, patients } from "@/lib/api";
-import type { Patient } from "@/lib/types";
+import { ApiError, analysis, getToken, studies } from "@/lib/api";
+import type { Study } from "@/lib/types";
 import { Topbar } from "@/components/Topbar";
+
+const STATUS_LABELS: Record<Study["status"], string> = {
+  uploaded: "Загружено",
+  processing: "Анализ…",
+  completed: "Готово",
+  failed: "Ошибка",
+};
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [items, setItems] = useState<Patient[]>([]);
+  const [items, setItems] = useState<Study[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [fullName, setFullName] = useState("");
-  const [birthDate, setBirthDate] = useState("");
-  const [sex, setSex] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [eye, setEye] = useState("OD");
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
       router.replace("/login");
       return;
     }
-    loadPatients();
+    loadStudies();
   }, [router]);
 
-  async function loadPatients() {
+  async function loadStudies() {
     setLoading(true);
     try {
-      setItems(await patients.list());
+      setItems(await studies.list());
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось загрузить пациентов");
+      setError(err instanceof ApiError ? err.message : "Не удалось загрузить исследования");
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleCreate(e: React.FormEvent) {
+  async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
-    setCreating(true);
+    if (!file) return;
+    setUploading(true);
     setError(null);
     try {
-      await patients.create({
-        full_name: fullName,
-        birth_date: birthDate || undefined,
-        sex: sex || undefined,
-      });
-      setFullName("");
-      setBirthDate("");
-      setSex("");
-      await loadPatients();
+      const study = await studies.upload(file, eye);
+      await analysis.run(study.id);
+      router.push(`/studies/${study.id}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось создать пациента");
+      setError(err instanceof ApiError ? err.message : "Не удалось загрузить снимок или выполнить анализ");
     } finally {
-      setCreating(false);
+      setUploading(false);
     }
   }
 
@@ -62,45 +63,45 @@ export default function DashboardPage() {
     <>
       <Topbar />
       <div className="container">
-        <h2>Новый пациент</h2>
-        <form onSubmit={handleCreate} className="card">
+        <h2>Загрузить ОКТ-снимок</h2>
+        <form onSubmit={handleUpload} className="card">
           <div className="form-row">
-            <label>ФИО пациента</label>
-            <input value={fullName} onChange={(e) => setFullName(e.target.value)} required />
-          </div>
-          <div className="form-row">
-            <label>Дата рождения</label>
-            <input type="date" value={birthDate} onChange={(e) => setBirthDate(e.target.value)} />
-          </div>
-          <div className="form-row">
-            <label>Пол</label>
-            <select value={sex} onChange={(e) => setSex(e.target.value)}>
-              <option value="">Не указан</option>
-              <option value="M">Мужской</option>
-              <option value="F">Женский</option>
+            <label>Глаз</label>
+            <select value={eye} onChange={(e) => setEye(e.target.value)}>
+              <option value="OD">OD (правый)</option>
+              <option value="OS">OS (левый)</option>
             </select>
           </div>
+          <div className="form-row">
+            <label>Файл (JPEG/PNG/TIFF)</label>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/tiff"
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              required
+            />
+          </div>
           {error && <div className="error">{error}</div>}
-          <button type="submit" disabled={creating}>
-            {creating ? "Создание…" : "Добавить пациента"}
+          <button type="submit" disabled={uploading || !file}>
+            {uploading ? "Загрузка…" : "Загрузить и запустить анализ"}
           </button>
         </form>
 
-        <h2>Пациенты</h2>
+        <h2>Мои исследования</h2>
         <div className="card">
           {loading && <p style={{ color: "var(--text-muted)" }}>Загрузка…</p>}
           {!loading && items.length === 0 && (
-            <p style={{ color: "var(--text-muted)" }}>Пациентов пока нет.</p>
+            <p style={{ color: "var(--text-muted)" }}>Исследований пока нет — загрузите первый снимок выше.</p>
           )}
-          {items.map((p) => (
-            <div key={p.id} className="list-item">
+          {items.map((s) => (
+            <div key={s.id} className="list-item">
               <div>
-                <div>{p.full_name}</div>
-                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  {p.birth_date ?? "дата рождения не указана"}
+                <div>
+                  {s.eye ?? "—"} · {new Date(s.created_at).toLocaleString("ru-RU")}
                 </div>
+                <span className={`badge ${s.status}`}>{STATUS_LABELS[s.status]}</span>
               </div>
-              <Link href={`/patients/${p.id}`}>Открыть →</Link>
+              <Link href={`/studies/${s.id}`}>Открыть →</Link>
             </div>
           ))}
         </div>

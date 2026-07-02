@@ -5,15 +5,6 @@ export interface User {
   role: string;
 }
 
-export interface Patient {
-  id: string;
-  full_name: string;
-  birth_date: string | null;
-  sex: string | null;
-  mrn: string | null;
-  created_at: string;
-}
-
 export interface Study {
   id: string;
   patient_id: string;

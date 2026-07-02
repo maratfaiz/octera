@@ -3,14 +3,26 @@ import io
 from PIL import Image
 
 
-def _register_and_login(client):
+def _register_and_login(client, email="user@example.com"):
     client.post(
         "/api/v1/auth/register",
-        json={"email": "doc@example.com", "full_name": "Dr. House", "password": "password123"},
+        json={"email": email, "full_name": "Ivan Petrov", "password": "password123"},
     )
-    resp = client.post("/api/v1/auth/login", json={"email": "doc@example.com", "password": "password123"})
+    resp = client.post("/api/v1/auth/login", json={"email": email, "password": "password123"})
     token = resp.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
+
+
+def _upload_test_study(client, headers):
+    img = Image.new("L", (512, 512), color=128)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return client.post(
+        "/api/v1/studies?eye=OD",
+        files={"file": ("scan.png", buf, "image/png")},
+        headers=headers,
+    )
 
 
 def test_health(client):
@@ -19,27 +31,19 @@ def test_health(client):
     assert resp.json() == {"status": "ok"}
 
 
-def test_full_flow(client, tmp_path):
+def test_registration_auto_creates_own_patient_profile(client):
     headers = _register_and_login(client)
 
-    patient_resp = client.post(
-        "/api/v1/patients",
-        json={"full_name": "Ivan Petrov", "sex": "M"},
-        headers=headers,
-    )
-    assert patient_resp.status_code == 201
-    patient_id = patient_resp.json()["id"]
+    resp = client.get("/api/v1/patients/me", headers=headers)
 
-    img = Image.new("L", (512, 512), color=128)
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
+    assert resp.status_code == 200
+    assert resp.json()["full_name"] == "Ivan Petrov"
 
-    study_resp = client.post(
-        f"/api/v1/studies?patient_id={patient_id}&eye=OD",
-        files={"file": ("scan.png", buf, "image/png")},
-        headers=headers,
-    )
+
+def test_full_flow(client):
+    headers = _register_and_login(client)
+
+    study_resp = _upload_test_study(client, headers)
     assert study_resp.status_code == 201
     study_id = study_resp.json()["id"]
 
@@ -51,3 +55,17 @@ def test_full_flow(client, tmp_path):
 
     fetched = client.get(f"/api/v1/analysis/{study_id}", headers=headers)
     assert fetched.status_code == 200
+
+
+def test_users_cannot_access_each_others_studies(client):
+    headers_a = _register_and_login(client, email="user_a@example.com")
+    headers_b = _register_and_login(client, email="user_b@example.com")
+
+    study_resp = _upload_test_study(client, headers_a)
+    study_id = study_resp.json()["id"]
+
+    resp = client.get(f"/api/v1/studies/{study_id}", headers=headers_b)
+    assert resp.status_code == 404
+
+    resp = client.post(f"/api/v1/analysis/{study_id}/run", headers=headers_b)
+    assert resp.status_code == 404

@@ -16,8 +16,8 @@ class Patient(Base):
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     sex: Mapped[str | None] = mapped_column(String(16), nullable=True)
     mrn: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_by_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    created_by: Mapped["User"] = relationship(back_populates="patients")
+    created_by: Mapped["User"] = relationship(back_populates="patient")
     studies: Mapped[list["Study"]] = relationship(back_populates="patient", cascade="all, delete-orphan")

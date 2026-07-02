@@ -47,7 +47,7 @@ export default function StudyPage() {
     <>
       <Topbar />
       <div className="container">
-        {study && <Link href={`/patients/${study.patient_id}`}>← К пациенту</Link>}
+        <Link href="/dashboard">← Мои исследования</Link>
         <h2>Результаты исследования</h2>
         {error && <div className="error">{error}</div>}
 

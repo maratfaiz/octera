@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
+from app.models.patient import Patient
 from app.models.user import User
 from app.schemas.user import LoginRequest, Token, UserCreate, UserRead
 
@@ -21,6 +22,12 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
         hashed_password=hash_password(payload.password),
     )
     db.add(user)
+    db.flush()
+
+    # Every account is self-service: each user gets their own patient record
+    # under the hood so the existing studies/analysis data model doesn't need
+    # to change, but nothing in the product surfaces the word "patient".
+    db.add(Patient(full_name=user.full_name, created_by_id=user.id))
     db.commit()
     db.refresh(user)
     return user

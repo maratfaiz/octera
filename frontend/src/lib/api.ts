@@ -1,4 +1,4 @@
-import type { AnalysisResult, Patient, Study, User } from "./types";
+import type { AnalysisResult, Study, User } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "octera_token";
@@ -55,21 +55,14 @@ export const auth = {
   },
 };
 
-export const patients = {
-  list: () => request<Patient[]>("/api/v1/patients"),
-  get: (id: string) => request<Patient>(`/api/v1/patients/${id}`),
-  create: (payload: { full_name: string; birth_date?: string; sex?: string; mrn?: string }) =>
-    request<Patient>("/api/v1/patients", { method: "POST", body: JSON.stringify(payload) }),
-};
-
 export const studies = {
-  listByPatient: (patientId: string) => request<Study[]>(`/api/v1/studies?patient_id=${patientId}`),
+  list: () => request<Study[]>("/api/v1/studies"),
   get: (id: string) => request<Study>(`/api/v1/studies/${id}`),
-  upload: (patientId: string, file: File, eye?: string) => {
+  upload: (file: File, eye?: string) => {
     const form = new FormData();
     form.append("file", file);
-    const query = new URLSearchParams({ patient_id: patientId, ...(eye ? { eye } : {}) });
-    return request<Study>(`/api/v1/studies?${query.toString()}`, { method: "POST", body: form });
+    const query = eye ? `?${new URLSearchParams({ eye }).toString()}` : "";
+    return request<Study>(`/api/v1/studies${query}`, { method: "POST", body: form });
   },
 };
 

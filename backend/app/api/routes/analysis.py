@@ -4,26 +4,31 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_patient
 from app.db.session import get_db
 from app.models.analysis import AnalysisResult
+from app.models.patient import Patient
 from app.models.study import Study
-from app.models.user import User
 from app.schemas.analysis import AnalysisResultRead
 from app.services.pipeline import run_analysis_pipeline
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
+def _get_own_study(study_id: str, patient: Patient, db: Session) -> Study:
+    study = db.get(Study, study_id)
+    if not study or study.patient_id != patient.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Исследование не найдено")
+    return study
+
+
 @router.post("/{study_id}/run", response_model=AnalysisResultRead, status_code=status.HTTP_201_CREATED)
 def run_analysis(
     study_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    patient: Patient = Depends(get_current_patient),
 ) -> AnalysisResult:
-    study = db.get(Study, study_id)
-    if not study:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Исследование не найдено")
+    study = _get_own_study(study_id, patient, db)
 
     study.status = "processing"
     db.commit()
@@ -50,9 +55,10 @@ def run_analysis(
 def get_analysis_result(
     study_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    patient: Patient = Depends(get_current_patient),
 ) -> AnalysisResult:
-    result = db.query(AnalysisResult).filter(AnalysisResult.study_id == study_id).first()
+    study = _get_own_study(study_id, patient, db)
+    result = db.query(AnalysisResult).filter(AnalysisResult.study_id == study.id).first()
     if not result:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Результат анализа не найден")
     return result
@@ -62,9 +68,10 @@ def get_analysis_result(
 def get_segmentation_map(
     study_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    patient: Patient = Depends(get_current_patient),
 ) -> FileResponse:
-    result = db.query(AnalysisResult).filter(AnalysisResult.study_id == study_id).first()
+    study = _get_own_study(study_id, patient, db)
+    result = db.query(AnalysisResult).filter(AnalysisResult.study_id == study.id).first()
     if not result or not result.segmentation_map_path or not Path(result.segmentation_map_path).exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Карта сегментации не найдена")
     return FileResponse(result.segmentation_map_path)

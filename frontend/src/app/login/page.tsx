@@ -34,7 +34,7 @@ export default function LoginPage() {
     <div className="container" style={{ maxWidth: 400, paddingTop: 80 }}>
       <h1 style={{ marginBottom: 4 }}>OCTera</h1>
       <p style={{ color: "var(--text-muted)", marginTop: 0 }}>
-        {mode === "login" ? "Вход в кабинет врача" : "Регистрация врача"}
+        {mode === "login" ? "Вход в личный кабинет" : "Регистрация"}
       </p>
 
       <form onSubmit={handleSubmit} className="card">
