@@ -15,6 +15,7 @@ export default function StudyPage() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [segmentationUrl, setSegmentationUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,6 +41,8 @@ export default function StudyPage() {
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Не удалось загрузить исследование");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -52,7 +55,13 @@ export default function StudyPage() {
           <h2>Результаты исследования</h2>
           {error && <div className="error">{error}</div>}
 
-          <div className="results-grid">
+          {loading && (
+            <div className="card loading-row">
+              <span className="spinner" /> Загрузка исследования…
+            </div>
+          )}
+
+          {!loading && <div className="results-grid">
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                 <div className="card">
@@ -137,7 +146,7 @@ export default function StudyPage() {
                 </div>
               )}
             </div>
-          </div>
+          </div>}
         </div>
       </div>
     </div>

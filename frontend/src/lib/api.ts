@@ -3,6 +3,22 @@ import type { AnalysisResult, Study, User } from "./types";
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const TOKEN_KEY = "octera_token";
 
+// Mirrors the backend's ALLOWED_CONTENT_TYPES / MAX_UPLOAD_SIZE_MB (see
+// backend/app/api/routes/studies.py, backend/app/core/config.py). Client-side
+// validation is a UX nicety only -- the backend enforces these regardless.
+export const ALLOWED_UPLOAD_TYPES = ["image/jpeg", "image/png", "image/tiff"];
+export const MAX_UPLOAD_SIZE_MB = 20;
+
+export function validateUploadFile(file: File): string | null {
+  if (!ALLOWED_UPLOAD_TYPES.includes(file.type)) {
+    return "Поддерживаются только изображения JPEG, PNG или TIFF";
+  }
+  if (file.size > MAX_UPLOAD_SIZE_MB * 1024 * 1024) {
+    return `Файл слишком большой. Максимальный размер: ${MAX_UPLOAD_SIZE_MB} МБ`;
+  }
+  return null;
+}
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem(TOKEN_KEY);

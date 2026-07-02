@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ApiError, analysis, getToken, studies } from "@/lib/api";
+import { ApiError, MAX_UPLOAD_SIZE_MB, analysis, getToken, studies, validateUploadFile } from "@/lib/api";
 import { Sidebar } from "@/components/Sidebar";
 
 export default function DashboardPage() {
@@ -17,6 +17,21 @@ export default function DashboardPage() {
       router.replace("/login");
     }
   }, [router]);
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const selected = e.target.files?.[0] ?? null;
+    if (selected) {
+      const validationError = validateUploadFile(selected);
+      if (validationError) {
+        setError(validationError);
+        setFile(null);
+        e.target.value = "";
+        return;
+      }
+    }
+    setError(null);
+    setFile(selected);
+  }
 
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault();
@@ -48,7 +63,8 @@ export default function DashboardPage() {
             <div className="upload-plus">+</div>
             <h2 style={{ margin: "0 0 4px" }}>Новый ОКТ-снимок</h2>
             <p style={{ color: "var(--text-muted)", marginTop: 0 }}>
-              Выберите файл для загрузки. Поддерживаются JPEG, PNG, TIFF.
+              Выберите файл для загрузки. Поддерживаются JPEG, PNG, TIFF. Максимальный размер: {MAX_UPLOAD_SIZE_MB}{" "}
+              МБ.
             </p>
 
             <div className="form-row">
@@ -59,16 +75,17 @@ export default function DashboardPage() {
               </select>
             </div>
             <div className="form-row">
-              <input
-                type="file"
-                accept="image/jpeg,image/png,image/tiff"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                required
-              />
+              <input type="file" accept="image/jpeg,image/png,image/tiff" onChange={handleFileChange} required />
             </div>
             {error && <div className="error">{error}</div>}
             <button type="submit" disabled={uploading || !file}>
-              {uploading ? "Анализ…" : "Загрузить и запустить анализ"}
+              {uploading ? (
+                <span className="loading-row">
+                  <span className="spinner" /> Анализ…
+                </span>
+              ) : (
+                "Загрузить и запустить анализ"
+              )}
             </button>
           </form>
         </div>
