@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
+from app.core.config import settings
+from app.core.rate_limit import rate_limit
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.patient import Patient
@@ -10,13 +12,19 @@ from app.schemas.user import LoginRequest, Token, UserCreate, UserRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+_auth_rate_limit = rate_limit(
+    "auth", max_attempts=settings.login_rate_limit_attempts, window_seconds=settings.login_rate_limit_window_seconds
+)
+
 
 @router.get("/me", response_model=UserRead)
 def get_me(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register", response_model=UserRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(_auth_rate_limit)]
+)
 def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     existing = db.query(User).filter(User.email == payload.email).first()
     if existing:
@@ -39,7 +47,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     return user
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=Token, dependencies=[Depends(_auth_rate_limit)])
 def login(payload: LoginRequest, db: Session = Depends(get_db)) -> Token:
     user = db.query(User).filter(User.email == payload.email).first()
     if not user or not verify_password(payload.password, user.hashed_password):

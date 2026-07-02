@@ -5,6 +5,7 @@ os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.rate_limit import reset_rate_limits
 from app.db.base import Base
 from app.db.session import engine
 from app.main import app
@@ -14,6 +15,7 @@ from app.main import app
 def _clean_db():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    reset_rate_limits()
     yield
     Base.metadata.drop_all(bind=engine)
 

@@ -37,14 +37,20 @@ async def upload_study(
             detail="Поддерживаются только изображения JPEG, PNG или TIFF",
         )
 
+    max_bytes = settings.max_upload_size_mb * 1024 * 1024
+    contents = await file.read(max_bytes + 1)
+    if len(contents) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Файл слишком большой. Максимальный размер: {settings.max_upload_size_mb} МБ",
+        )
+
     storage_dir = Path(settings.storage_dir)
     storage_dir.mkdir(parents=True, exist_ok=True)
 
     extension = Path(file.filename or "").suffix or ".jpg"
     filename = f"{uuid.uuid4()}{extension}"
     destination = storage_dir / filename
-
-    contents = await file.read()
     destination.write_bytes(contents)
 
     study = Study(patient_id=patient.id, image_path=str(destination), eye=eye)

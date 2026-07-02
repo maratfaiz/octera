@@ -5,13 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import models  # noqa: F401 - ensures models are registered on Base.metadata
 from app.api.routes import analysis, auth, patients, studies
-from app.core.config import settings
+from app.core.config import assert_production_config_is_safe, settings
 from app.db.base import Base
 from app.db.session import engine
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    assert_production_config_is_safe()
     Base.metadata.create_all(bind=engine)
     yield
 
