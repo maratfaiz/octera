@@ -38,6 +38,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 from sklearn.neural_network import MLPClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
 from app.ml.features import extract_features
@@ -46,17 +48,31 @@ from app.ml.synthetic_dataset import generate_dataset
 
 
 def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
+    # Each estimator is wrapped in a StandardScaler so the handful of domain
+    # features (band thickness, dark-zone fraction, ...) get comparable weight
+    # to the 2304 raw-pixel features instead of being drowned out -- and the
+    # saved checkpoint carries the scaler, so inference stays consistent.
     return {
-        "mlp_128_64": MLPClassifier(
-            hidden_layer_sizes=(128, 64), activation="relu", alpha=1e-4, max_iter=600, random_state=random_state
+        "mlp_128_64": make_pipeline(
+            StandardScaler(),
+            MLPClassifier(
+                hidden_layer_sizes=(128, 64), activation="relu", alpha=1e-4, max_iter=600, random_state=random_state
+            ),
         ),
-        "mlp_64": MLPClassifier(
-            hidden_layer_sizes=(64,), activation="relu", alpha=1e-4, max_iter=600, random_state=random_state
+        "mlp_64": make_pipeline(
+            StandardScaler(),
+            MLPClassifier(
+                hidden_layer_sizes=(64,), activation="relu", alpha=1e-4, max_iter=600, random_state=random_state
+            ),
         ),
-        "random_forest": RandomForestClassifier(
-            n_estimators=200, class_weight="balanced", random_state=random_state
+        "random_forest": make_pipeline(
+            StandardScaler(),
+            RandomForestClassifier(n_estimators=200, class_weight="balanced", random_state=random_state),
         ),
-        "svm_rbf": SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
+        "svm_rbf": make_pipeline(
+            StandardScaler(),
+            SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
+        ),
     }
 
 

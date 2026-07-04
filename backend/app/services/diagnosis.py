@@ -10,11 +10,11 @@ on the "Dataset of Eye Fundus and OCT Images for the study of Diabetic
 Macular Edema and Diabetic Retinopathy" (Hughes Cano, Olivares Pinto &
 Thebault -- CONACYT/UNAM/IMO/APEC/INDEREB), i.e. real de-identified patient
 OCT scans with DME diagnosed by retinal ophthalmologists -- not synthetic
-data. That said, it is a simple pixel-downscale + shallow classifier
-trained on ~1,100 images from one study; it has NOT gone through clinical
-validation and must not be used for anything beyond demonstrating the
-mechanism. See app/ml/train.py and app/ml/artifacts/metrics.json for
-training details and measured accuracy.
+data. That said, it is a HOG + domain-feature classifier (see
+app/ml/features.py) trained on ~1,100 images from one study; it has NOT gone
+through clinical validation and must not be used for anything beyond
+demonstrating the mechanism. See app/ml/train.py and
+app/ml/artifacts/metrics.json for training details and measured accuracy.
 """
 
 import hashlib
