@@ -36,7 +36,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, precision_recall_curve
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import make_pipeline
@@ -131,6 +131,42 @@ def _oversample_minority(
     return out_images, out_labels
 
 
+def _threshold_analysis(y_test: np.ndarray, dme_proba: np.ndarray, min_recall: float = 0.85) -> dict:
+    """Analysis-only: how DME precision/recall trade off if the 0.5 argmax cutoff
+    used by classification_report() were replaced by a different probability
+    cutoff. Informational (reported in the model card) -- nothing downstream
+    reads this or changes app behavior; that's a separate, clinically-motivated
+    product decision, not something to flip silently from a training script.
+    """
+    y_true = (y_test == "DME").astype(int)
+    precisions, recalls, thresholds = precision_recall_curve(y_true, dme_proba)
+    f1s = np.divide(
+        2 * precisions[:-1] * recalls[:-1],
+        precisions[:-1] + recalls[:-1],
+        out=np.zeros_like(thresholds),
+        where=(precisions[:-1] + recalls[:-1]) > 0,
+    )
+
+    def _report_at(threshold: float) -> dict:
+        preds = np.where(dme_proba >= threshold, "DME", "NORMAL")
+        return {
+            "threshold": float(threshold),
+            "classification_report": classification_report(y_test, preds, output_dict=True),
+            "confusion_matrix": confusion_matrix(y_test, preds, labels=CLASSES).tolist(),
+        }
+
+    best_f1_idx = int(np.argmax(f1s))
+    result = {"default_threshold": 0.5, "best_f1_operating_point": _report_at(float(thresholds[best_f1_idx]))}
+
+    high_recall_candidates = [i for i in range(len(thresholds)) if recalls[i] >= min_recall]
+    if high_recall_candidates:
+        best_high_recall_idx = max(high_recall_candidates, key=lambda i: precisions[i])
+        result["high_recall_operating_point"] = _report_at(float(thresholds[best_high_recall_idx]))
+    else:
+        result["high_recall_operating_point"] = None
+    return result
+
+
 def select_best_model(X: np.ndarray, y: np.ndarray, cv_folds: int = 4) -> tuple[str, object, dict[str, float]]:
     cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     scores: dict[str, float] = {}
@@ -201,6 +237,24 @@ def main() -> None:
     print(f"Held-out test accuracy: {test_accuracy:.3f}")
     print(classification_report(y_test, preds))
 
+    threshold_analysis = None
+    if "DME" in model.clf.classes_:
+        dme_proba = model.clf.predict_proba(X_test)[:, list(model.clf.classes_).index("DME")]
+        threshold_analysis = _threshold_analysis(y_test, dme_proba)
+        best = threshold_analysis["best_f1_operating_point"]
+        print(
+            f"Threshold analysis (informational, not applied): best-F1 DME cutoff = {best['threshold']:.3f} "
+            f"(precision {best['classification_report']['DME']['precision']:.2f} / "
+            f"recall {best['classification_report']['DME']['recall']:.2f})"
+        )
+        high_recall = threshold_analysis["high_recall_operating_point"]
+        if high_recall:
+            print(
+                f"  recall>=0.85 cutoff = {high_recall['threshold']:.3f} "
+                f"(precision {high_recall['classification_report']['DME']['precision']:.2f} / "
+                f"recall {high_recall['classification_report']['DME']['recall']:.2f})"
+            )
+
     model.save(args.out)
     print(f"Saved checkpoint to {args.out}")
 
@@ -217,6 +271,7 @@ def main() -> None:
         "classification_report": report,
         "confusion_matrix": confusion_matrix(y_test, preds, labels=CLASSES).tolist(),
         "trained_on_real_patient_data": data_source != "synthetic",
+        "dme_threshold_analysis": threshold_analysis,
     }
     metrics_path = Path(args.out).with_name("metrics.json")
     metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False))

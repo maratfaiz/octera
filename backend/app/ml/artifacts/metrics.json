@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-06T16:31:22.607323+00:00",
+  "trained_at": "2026-07-15T20:01:30.514681+00:00",
   "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
   "n_samples": 1113,
   "n_train_samples_after_oversampling": 890,
@@ -53,5 +53,88 @@
       22
     ]
   ],
-  "trained_on_real_patient_data": true
+  "trained_on_real_patient_data": true,
+  "dme_threshold_analysis": {
+    "default_threshold": 0.5,
+    "best_f1_operating_point": {
+      "threshold": 0.5310139656066895,
+      "classification_report": {
+        "DME": {
+          "precision": 0.9565217391304348,
+          "recall": 0.6666666666666666,
+          "f1-score": 0.7857142857142857,
+          "support": 33.0
+        },
+        "NORMAL": {
+          "precision": 0.945,
+          "recall": 0.9947368421052631,
+          "f1-score": 0.9692307692307692,
+          "support": 190.0
+        },
+        "accuracy": 0.9461883408071748,
+        "macro avg": {
+          "precision": 0.9507608695652174,
+          "recall": 0.8307017543859649,
+          "f1-score": 0.8774725274725275,
+          "support": 223.0
+        },
+        "weighted avg": {
+          "precision": 0.9467050107233378,
+          "recall": 0.9461883408071748,
+          "f1-score": 0.9420736214458187,
+          "support": 223.0
+        }
+      },
+      "confusion_matrix": [
+        [
+          189,
+          1
+        ],
+        [
+          11,
+          22
+        ]
+      ]
+    },
+    "high_recall_operating_point": {
+      "threshold": 0.01760786771774292,
+      "classification_report": {
+        "DME": {
+          "precision": 0.625,
+          "recall": 0.9090909090909091,
+          "f1-score": 0.7407407407407407,
+          "support": 33.0
+        },
+        "NORMAL": {
+          "precision": 0.9828571428571429,
+          "recall": 0.9052631578947369,
+          "f1-score": 0.9424657534246575,
+          "support": 190.0
+        },
+        "accuracy": 0.905829596412556,
+        "macro avg": {
+          "precision": 0.8039285714285714,
+          "recall": 0.907177033492823,
+          "f1-score": 0.8416032470826991,
+          "support": 223.0
+        },
+        "weighted avg": {
+          "precision": 0.9299007046764893,
+          "recall": 0.905829596412556,
+          "f1-score": 0.9126140699333155,
+          "support": 223.0
+        }
+      },
+      "confusion_matrix": [
+        [
+          172,
+          18
+        ],
+        [
+          3,
+          30
+        ]
+      ]
+    }
+  }
 }
