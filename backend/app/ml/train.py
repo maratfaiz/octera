@@ -37,7 +37,7 @@ import numpy as np
 from PIL import Image
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, precision_recall_curve
-from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
+from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -131,39 +131,71 @@ def _oversample_minority(
     return out_images, out_labels
 
 
-def _threshold_analysis(y_test: np.ndarray, dme_proba: np.ndarray, min_recall: float = 0.85) -> dict:
-    """Analysis-only: how DME precision/recall trade off if the 0.5 argmax cutoff
-    used by classification_report() were replaced by a different probability
-    cutoff. Informational (reported in the model card) -- nothing downstream
-    reads this or changes app behavior; that's a separate, clinically-motivated
-    product decision, not something to flip silently from a training script.
+def _select_thresholds(y_true: np.ndarray, dme_proba: np.ndarray, min_recall: float = 0.85) -> dict:
+    """Picks candidate DME probability cutoffs from a precision-recall curve.
+
+    Caller must feed this data the model's threshold choice will not later be
+    graded against -- see _cv_threshold_analysis, which is why this function
+    itself takes bare arrays rather than reaching into the test set.
     """
-    y_true = (y_test == "DME").astype(int)
-    precisions, recalls, thresholds = precision_recall_curve(y_true, dme_proba)
+    y_binary = (y_true == "DME").astype(int)
+    precisions, recalls, thresholds = precision_recall_curve(y_binary, dme_proba)
     f1s = np.divide(
         2 * precisions[:-1] * recalls[:-1],
         precisions[:-1] + recalls[:-1],
         out=np.zeros_like(thresholds),
         where=(precisions[:-1] + recalls[:-1]) > 0,
     )
-
-    def _report_at(threshold: float) -> dict:
-        preds = np.where(dme_proba >= threshold, "DME", "NORMAL")
-        return {
-            "threshold": float(threshold),
-            "classification_report": classification_report(y_test, preds, output_dict=True),
-            "confusion_matrix": confusion_matrix(y_test, preds, labels=CLASSES).tolist(),
-        }
-
-    best_f1_idx = int(np.argmax(f1s))
-    result = {"default_threshold": 0.5, "best_f1_operating_point": _report_at(float(thresholds[best_f1_idx]))}
+    best_f1_threshold = float(thresholds[int(np.argmax(f1s))])
 
     high_recall_candidates = [i for i in range(len(thresholds)) if recalls[i] >= min_recall]
-    if high_recall_candidates:
-        best_high_recall_idx = max(high_recall_candidates, key=lambda i: precisions[i])
-        result["high_recall_operating_point"] = _report_at(float(thresholds[best_high_recall_idx]))
-    else:
-        result["high_recall_operating_point"] = None
+    high_recall_threshold = (
+        float(thresholds[max(high_recall_candidates, key=lambda i: precisions[i])]) if high_recall_candidates else None
+    )
+    return {"best_f1_threshold": best_f1_threshold, "high_recall_threshold": high_recall_threshold}
+
+
+def _metrics_at_threshold(y_true: np.ndarray, dme_proba: np.ndarray, threshold: float) -> dict:
+    preds = np.where(dme_proba >= threshold, "DME", "NORMAL")
+    return {
+        "threshold": float(threshold),
+        "classification_report": classification_report(y_true, preds, output_dict=True),
+        "confusion_matrix": confusion_matrix(y_true, preds, labels=CLASSES).tolist(),
+    }
+
+
+def _cv_threshold_analysis(
+    X_train: np.ndarray, y_train: np.ndarray, y_test: np.ndarray, test_dme_proba: np.ndarray, estimator: object
+) -> dict:
+    """Picks DME decision-threshold operating points using only the training
+    split (via 4-fold out-of-fold predictions), then reports how those exact
+    thresholds perform on the untouched test set.
+
+    Round 5 originally chose thresholds by running precision_recall_curve
+    directly against the test set -- the same set used to report the final
+    numbers. That is test-set leakage: it picks the threshold that looks best
+    on the specific 223 test images, not one expected to generalize. Round 6
+    fixes this by selecting thresholds out-of-fold on the 890 training images
+    only; the test set is then used exactly once, to grade (not pick) those
+    thresholds.
+    """
+    cv = StratifiedKFold(n_splits=4, shuffle=True, random_state=42)
+    oof_proba = cross_val_predict(estimator, X_train, y_train, cv=cv, method="predict_proba")
+    train_classes = sorted(set(y_train))
+    oof_dme_proba = oof_proba[:, train_classes.index("DME")]
+
+    thresholds = _select_thresholds(y_train, oof_dme_proba)
+    result = {
+        "selection_method": "thresholds chosen via 4-fold out-of-fold CV on the training split only; "
+        "metrics below are the test set graded at those thresholds, not used to pick them",
+        "default_threshold": 0.5,
+        "best_f1_operating_point": _metrics_at_threshold(y_test, test_dme_proba, thresholds["best_f1_threshold"]),
+    }
+    result["high_recall_operating_point"] = (
+        _metrics_at_threshold(y_test, test_dme_proba, thresholds["high_recall_threshold"])
+        if thresholds["high_recall_threshold"] is not None
+        else None
+    )
     return result
 
 
@@ -239,19 +271,20 @@ def main() -> None:
 
     threshold_analysis = None
     if "DME" in model.clf.classes_:
-        dme_proba = model.clf.predict_proba(X_test)[:, list(model.clf.classes_).index("DME")]
-        threshold_analysis = _threshold_analysis(y_test, dme_proba)
+        test_dme_proba = model.clf.predict_proba(X_test)[:, list(model.clf.classes_).index("DME")]
+        print("Selecting DME decision thresholds via out-of-fold CV on the training split (not the test set):")
+        threshold_analysis = _cv_threshold_analysis(X_train, y_train, y_test, test_dme_proba, best_estimator)
         best = threshold_analysis["best_f1_operating_point"]
         print(
-            f"Threshold analysis (informational, not applied): best-F1 DME cutoff = {best['threshold']:.3f} "
-            f"(precision {best['classification_report']['DME']['precision']:.2f} / "
+            f"  best-F1 cutoff = {best['threshold']:.3f} "
+            f"(test precision {best['classification_report']['DME']['precision']:.2f} / "
             f"recall {best['classification_report']['DME']['recall']:.2f})"
         )
         high_recall = threshold_analysis["high_recall_operating_point"]
         if high_recall:
             print(
-                f"  recall>=0.85 cutoff = {high_recall['threshold']:.3f} "
-                f"(precision {high_recall['classification_report']['DME']['precision']:.2f} / "
+                f"  recall>=0.85 (on train CV) cutoff = {high_recall['threshold']:.3f} "
+                f"(test precision {high_recall['classification_report']['DME']['precision']:.2f} / "
                 f"recall {high_recall['classification_report']['DME']['recall']:.2f})"
             )
 

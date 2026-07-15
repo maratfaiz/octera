@@ -10,16 +10,24 @@ from app.services.diagnosis import Diagnosis
 
 LOW_CONFIDENCE_THRESHOLD = 0.5
 
-# High-recall operating point from ML round 5's precision/recall analysis
-# (app/ml/artifacts/metrics.json -> dme_threshold_analysis.high_recall_operating_point),
-# chosen deliberately over the raw 50% argmax cutoff: on the held-out real-patient
-# test set it catches 91% of DME cases instead of 67% (misses 3/33 instead of 11/33),
-# at the cost of more false alarms (precision 0.62 vs 0.92). For a screening
-# assistant where a doctor reviews every flagged case, a missed edema is worse than
-# an extra review, so DME is flagged as soon as its probability crosses this bar --
-# even when NORMAL is still the nominally more likely class. Revisit this number if
-# app/ml/train.py is rerun and the model card's high-recall cutoff moves.
-DME_SCREENING_THRESHOLD = 0.018
+# High-recall operating point from ML round 5's precision/recall analysis, chosen
+# deliberately over the raw 50% argmax cutoff: for a screening assistant where a
+# doctor reviews every flagged case, a missed edema is worse than an extra review,
+# so DME is flagged as soon as its probability crosses this bar -- even when NORMAL
+# is still the nominally more likely class.
+#
+# Round 5 originally shipped 0.018, chosen by running the precision/recall curve
+# directly against the held-out test set -- which is test-set leakage (the
+# threshold that looks best on those specific 223 images isn't necessarily one
+# that generalizes). Round 6 fixed the selection method (out-of-fold CV on the
+# training split only, see app/ml/train.py's _cv_threshold_analysis) and got an
+# honest number: at 0.042, held-out test recall is 0.79 (not the 0.91 round 5
+# claimed) with precision 0.68. Recall is still well above the plain 50% cutoff's
+# 0.67, just not as dramatic as the leaky estimate suggested -- see
+# app/ml/artifacts/metrics.json and the README for both rounds' numbers.
+# Revisit this number if app/ml/train.py is rerun and the model card's
+# high-recall cutoff moves.
+DME_SCREENING_THRESHOLD = 0.042
 
 
 def generate_report(
