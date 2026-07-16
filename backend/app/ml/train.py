@@ -36,7 +36,14 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, precision_recall_curve
+from sklearn.metrics import (
+    accuracy_score,
+    brier_score_loss,
+    classification_report,
+    confusion_matrix,
+    log_loss,
+    precision_recall_curve,
+)
 from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import make_pipeline
@@ -270,8 +277,25 @@ def main() -> None:
     print(classification_report(y_test, preds))
 
     threshold_analysis = None
+    calibration_metrics = None
     if "DME" in model.clf.classes_:
-        test_dme_proba = model.clf.predict_proba(X_test)[:, list(model.clf.classes_).index("DME")]
+        dme_class_idx = list(model.clf.classes_).index("DME")
+        test_dme_proba = model.clf.predict_proba(X_test)[:, dme_class_idx]
+        y_test_binary = (y_test == "DME").astype(int)
+        calibration_metrics = {
+            "brier_score": float(brier_score_loss(y_test_binary, test_dme_proba)),
+            # log_loss accepts a 1D array of positive-class (y_true==1, i.e. DME) probabilities for binary y_true.
+            "log_loss": float(log_loss(y_test_binary, test_dme_proba)),
+            "note": (
+                "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves "
+                "both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall "
+                "threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a "
+                "roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific "
+                "operating point -- not shipped, see README round 8."
+            ),
+        }
+        print(f"Calibration: Brier={calibration_metrics['brier_score']:.4f} LogLoss={calibration_metrics['log_loss']:.3f}")
+
         print("Selecting DME decision thresholds via out-of-fold CV on the training split (not the test set):")
         threshold_analysis = _cv_threshold_analysis(X_train, y_train, y_test, test_dme_proba, best_estimator)
         best = threshold_analysis["best_f1_operating_point"]
@@ -305,6 +329,7 @@ def main() -> None:
         "confusion_matrix": confusion_matrix(y_test, preds, labels=CLASSES).tolist(),
         "trained_on_real_patient_data": data_source != "synthetic",
         "dme_threshold_analysis": threshold_analysis,
+        "dme_calibration_metrics": calibration_metrics,
     }
     metrics_path = Path(args.out).with_name("metrics.json")
     metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False))
