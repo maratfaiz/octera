@@ -20,14 +20,19 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 # directly against the held-out test set -- which is test-set leakage (the
 # threshold that looks best on those specific 223 images isn't necessarily one
 # that generalizes). Round 6 fixed the selection method (out-of-fold CV on the
-# training split only, see app/ml/train.py's _cv_threshold_analysis) and got an
-# honest number: at 0.042, held-out test recall is 0.79 (not the 0.91 round 5
-# claimed) with precision 0.68. Recall is still well above the plain 50% cutoff's
-# 0.67, just not as dramatic as the leaky estimate suggested -- see
-# app/ml/artifacts/metrics.json and the README for both rounds' numbers.
+# training split only, see app/ml/train.py's _cv_threshold_analysis) and got
+# 0.042 (test recall 0.79 / precision 0.68). Round 10 found a second, bigger
+# leak upstream of the threshold entirely: ~25% of dataset images share a
+# patient with another image (both eyes / repeat visits), and the plain
+# stratified train/test split let 79 of 831 patients leak across both splits.
+# A patient-grouped split (_group_aware_split) fixed that and produced more
+# modest, but still real, honest numbers: at 0.037, test recall is 0.88 with
+# precision 0.57 (the un-thresholded 50% cutoff's honest recall dropped to
+# 0.64 from the previously-reported, leaky 0.67). See app/ml/artifacts/
+# metrics.json and the README for the full history across rounds 5/6/10.
 # Revisit this number if app/ml/train.py is rerun and the model card's
 # high-recall cutoff moves.
-DME_SCREENING_THRESHOLD = 0.042
+DME_SCREENING_THRESHOLD = 0.037
 
 
 def generate_report(

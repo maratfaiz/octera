@@ -44,7 +44,7 @@ from sklearn.metrics import (
     log_loss,
     precision_recall_curve,
 )
-from sklearn.model_selection import StratifiedKFold, cross_val_predict, cross_val_score, train_test_split
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, cross_val_predict, cross_val_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -85,9 +85,15 @@ def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
     }
 
 
-def _load_real_dataset(data_dir: str) -> tuple[list[np.ndarray], list[str]]:
+def _load_real_dataset(data_dir: str) -> tuple[list[np.ndarray], list[str], list[str]]:
     """Loads the OCT-AND-EYE-FUNDUS-DATASET layout: <data_dir>/OCT.csv +
     <data_dir>/OCT/OCT*/<Name>.jpg, labeled by the CSV's DME column.
+
+    Also returns a patient ID per image (the leading numeric ID in filenames
+    like "1222_OD_o_2" -- eye + visit index follow the underscore), since ~25%
+    of images share a patient with at least one other image in the dataset
+    (both eyes and/or repeat visits). See README round 10: this is needed for
+    a patient-grouped train/test split, not just a stratified one.
     """
     root = Path(data_dir)
     csv_path = root / "OCT.csv"
@@ -101,6 +107,7 @@ def _load_real_dataset(data_dir: str) -> tuple[list[np.ndarray], list[str]]:
 
     images: list[np.ndarray] = []
     labels: list[str] = []
+    patient_ids: list[str] = []
     with csv_path.open(newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             path = image_index.get(row["Name"])
@@ -108,7 +115,22 @@ def _load_real_dataset(data_dir: str) -> tuple[list[np.ndarray], list[str]]:
                 continue
             images.append(np.array(Image.open(path).convert("L")))
             labels.append("DME" if row["DME"].strip() == "1" else "NORMAL")
-    return images, labels
+            patient_ids.append(row["Name"].split("_")[0])
+    return images, labels, patient_ids
+
+
+def _group_aware_split(
+    labels: list[str], groups: list[str], n_splits: int = 5, random_state: int = 42
+) -> tuple[np.ndarray, np.ndarray]:
+    """Stratified train/test split (~1/n_splits as test) that also keeps every
+    group (patient) entirely on one side -- unlike a plain stratified split,
+    which only balances DME/NORMAL and can (does, on this dataset: 79 of 831
+    patients) split one patient's images across train and test.
+    """
+    sgkf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    dummy_X = np.zeros(len(labels))
+    train_idx, test_idx = next(sgkf.split(dummy_X, labels, groups))
+    return train_idx, test_idx
 
 
 def _oversample_minority(
@@ -172,7 +194,12 @@ def _metrics_at_threshold(y_true: np.ndarray, dme_proba: np.ndarray, threshold: 
 
 
 def _cv_threshold_analysis(
-    X_train: np.ndarray, y_train: np.ndarray, y_test: np.ndarray, test_dme_proba: np.ndarray, estimator: object
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    y_test: np.ndarray,
+    test_dme_proba: np.ndarray,
+    estimator: object,
+    groups_train: np.ndarray | None = None,
 ) -> dict:
     """Picks DME decision-threshold operating points using only the training
     split (via 4-fold out-of-fold predictions), then reports how those exact
@@ -184,10 +211,16 @@ def _cv_threshold_analysis(
     on the specific 223 test images, not one expected to generalize. Round 6
     fixes this by selecting thresholds out-of-fold on the 890 training images
     only; the test set is then used exactly once, to grade (not pick) those
-    thresholds.
+    thresholds. Round 10 adds patient grouping to that same CV (groups_train),
+    for the same reason the main train/test split needs it -- see
+    _group_aware_split.
     """
-    cv = StratifiedKFold(n_splits=4, shuffle=True, random_state=42)
-    oof_proba = cross_val_predict(estimator, X_train, y_train, cv=cv, method="predict_proba")
+    cv = (
+        StratifiedGroupKFold(n_splits=4, shuffle=True, random_state=42)
+        if groups_train is not None
+        else StratifiedKFold(n_splits=4, shuffle=True, random_state=42)
+    )
+    oof_proba = cross_val_predict(estimator, X_train, y_train, groups=groups_train, cv=cv, method="predict_proba")
     train_classes = sorted(set(y_train))
     oof_dme_proba = oof_proba[:, train_classes.index("DME")]
 
@@ -206,11 +239,17 @@ def _cv_threshold_analysis(
     return result
 
 
-def select_best_model(X: np.ndarray, y: np.ndarray, cv_folds: int = 4) -> tuple[str, object, dict[str, float]]:
-    cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+def select_best_model(
+    X: np.ndarray, y: np.ndarray, cv_folds: int = 4, groups: np.ndarray | None = None
+) -> tuple[str, object, dict[str, float]]:
+    cv = (
+        StratifiedGroupKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+        if groups is not None
+        else StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+    )
     scores: dict[str, float] = {}
     for name, estimator in _candidate_estimators().items():
-        fold_scores = cross_val_score(estimator, X, y, cv=cv, scoring="balanced_accuracy")
+        fold_scores = cross_val_score(estimator, X, y, groups=groups, cv=cv, scoring="balanced_accuracy")
         scores[name] = float(fold_scores.mean())
         print(f"  {name}: cv balanced accuracy = {fold_scores.mean():.3f} (+/- {fold_scores.std():.3f})")
 
@@ -234,12 +273,14 @@ def main() -> None:
     parser.add_argument("--out", type=str, default=str(DEFAULT_CHECKPOINT_PATH))
     args = parser.parse_args()
 
+    groups: list[str] | None
     if args.data_dir:
-        raw_images, labels = _load_real_dataset(args.data_dir)
+        raw_images, labels, groups = _load_real_dataset(args.data_dir)
         if not raw_images:
             raise SystemExit(f"No images matched between OCT.csv and OCT/OCT*/*.jpg under {args.data_dir}")
         data_source = "real:OCT-AND-EYE-FUNDUS-DATASET"
-        print(f"Loaded {len(raw_images)} real images from {args.data_dir}")
+        n_patients = len(set(groups))
+        print(f"Loaded {len(raw_images)} real images from {args.data_dir} ({n_patients} unique patients)")
     else:
         print(
             "No --data-dir given: training on synthetic procedural data. "
@@ -247,16 +288,27 @@ def main() -> None:
         )
         data_source = "synthetic"
         raw_images, labels = generate_dataset(n_per_class=args.synthetic_per_class, augment=not args.no_augment)
+        groups = None  # no patient concept for procedurally generated images
 
-    images_train, images_test, labels_train, labels_test = train_test_split(
-        raw_images, labels, test_size=0.2, random_state=42, stratify=labels
-    )
+    # A patient's images (both eyes, repeat visits) never span both splits -- see
+    # _group_aware_split and README round 10. Synthetic images have no group
+    # concept, so each gets its own trivial one-sample group (a no-op constraint).
+    split_groups = groups if groups is not None else [str(i) for i in range(len(labels))]
+    train_idx, test_idx = _group_aware_split(labels, split_groups)
+    images_train = [raw_images[i] for i in train_idx]
+    images_test = [raw_images[i] for i in test_idx]
+    labels_train = [labels[i] for i in train_idx]
+    labels_test = [labels[i] for i in test_idx]
+    groups_train = np.array(split_groups)[train_idx] if groups is not None else None
 
     if args.minority_oversample > 1:
         rng = np.random.default_rng(42)
         before = Counter(labels_train)
         images_train, labels_train = _oversample_minority(images_train, labels_train, rng, args.minority_oversample)
         print(f"Oversampled minority classes in training split: {dict(before)} -> {dict(Counter(labels_train))}")
+        # Augmented copies aren't tied to a well-defined patient group; skip group-aware
+        # internal CV rather than mis-group them (this flag ships disabled by default).
+        groups_train = None
 
     X_train = np.stack([extract_features(Image.fromarray(img)) for img in images_train])
     X_test = np.stack([extract_features(Image.fromarray(img)) for img in images_test])
@@ -264,7 +316,7 @@ def main() -> None:
     y_test = np.array(labels_test)
 
     print("Selecting best model via cross-validation on the training split:")
-    best_name, best_estimator, cv_scores = select_best_model(X_train, y_train)
+    best_name, best_estimator, cv_scores = select_best_model(X_train, y_train, groups=groups_train)
     print(f"Selected: {best_name} (cv balanced accuracy = {cv_scores[best_name]:.3f})")
 
     model = OCTClassifier(best_estimator)
@@ -297,7 +349,9 @@ def main() -> None:
         print(f"Calibration: Brier={calibration_metrics['brier_score']:.4f} LogLoss={calibration_metrics['log_loss']:.3f}")
 
         print("Selecting DME decision thresholds via out-of-fold CV on the training split (not the test set):")
-        threshold_analysis = _cv_threshold_analysis(X_train, y_train, y_test, test_dme_proba, best_estimator)
+        threshold_analysis = _cv_threshold_analysis(
+            X_train, y_train, y_test, test_dme_proba, best_estimator, groups_train=groups_train
+        )
         best = threshold_analysis["best_f1_operating_point"]
         print(
             f"  best-F1 cutoff = {best['threshold']:.3f} "

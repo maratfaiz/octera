@@ -1,8 +1,8 @@
 {
-  "trained_at": "2026-07-16T01:06:04.747143+00:00",
+  "trained_at": "2026-07-16T02:52:56.081219+00:00",
   "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
   "n_samples": 1113,
-  "n_train_samples_after_oversampling": 890,
+  "n_train_samples_after_oversampling": 891,
   "minority_oversample_factor": 1,
   "classes": [
     "NORMAL",
@@ -10,47 +10,47 @@
   ],
   "selected_model": "mlp_64",
   "cv_balanced_accuracy_by_model": {
-    "mlp_128_64": 0.7990974167444757,
-    "mlp_64": 0.80704276660159,
-    "random_forest": 0.6161987522281639,
-    "svm_rbf": 0.7971822567410802
+    "mlp_128_64": 0.8027851760345011,
+    "mlp_64": 0.8165359118812459,
+    "random_forest": 0.5880267511209787,
+    "svm_rbf": 0.8163696135188523
   },
-  "test_accuracy": 0.9417040358744395,
+  "test_accuracy": 0.9279279279279279,
   "classification_report": {
     "DME": {
-      "precision": 0.9166666666666666,
-      "recall": 0.6666666666666666,
-      "f1-score": 0.7719298245614035,
+      "precision": 0.84,
+      "recall": 0.6363636363636364,
+      "f1-score": 0.7241379310344828,
       "support": 33.0
     },
     "NORMAL": {
-      "precision": 0.9447236180904522,
-      "recall": 0.9894736842105263,
-      "f1-score": 0.9665809768637532,
-      "support": 190.0
+      "precision": 0.9390862944162437,
+      "recall": 0.9788359788359788,
+      "f1-score": 0.9585492227979274,
+      "support": 189.0
     },
-    "accuracy": 0.9417040358744395,
+    "accuracy": 0.9279279279279279,
     "macro avg": {
-      "precision": 0.9306951423785594,
-      "recall": 0.8280701754385964,
-      "f1-score": 0.8692554007125783,
-      "support": 223.0
+      "precision": 0.8895431472081219,
+      "recall": 0.8075998075998077,
+      "f1-score": 0.8413435769162051,
+      "support": 222.0
     },
     "weighted avg": {
-      "precision": 0.9405716925434346,
-      "recall": 0.9417040358744395,
-      "f1-score": 0.9377760978234951,
-      "support": 223.0
+      "precision": 0.924357250651667,
+      "recall": 0.9279279279279279,
+      "f1-score": 0.9237043010493073,
+      "support": 222.0
     }
   },
   "confusion_matrix": [
     [
-      188,
-      2
+      185,
+      4
     ],
     [
-      11,
-      22
+      12,
+      21
     ]
   ],
   "trained_on_real_patient_data": true,
@@ -58,89 +58,89 @@
     "selection_method": "thresholds chosen via 4-fold out-of-fold CV on the training split only; metrics below are the test set graded at those thresholds, not used to pick them",
     "default_threshold": 0.5,
     "best_f1_operating_point": {
-      "threshold": 0.13453656435012817,
+      "threshold": 0.37327897548675537,
       "classification_report": {
         "DME": {
-          "precision": 0.8214285714285714,
-          "recall": 0.696969696969697,
-          "f1-score": 0.7540983606557377,
+          "precision": 0.8076923076923077,
+          "recall": 0.6363636363636364,
+          "f1-score": 0.711864406779661,
           "support": 33.0
         },
         "NORMAL": {
-          "precision": 0.9487179487179487,
-          "recall": 0.9736842105263158,
-          "f1-score": 0.961038961038961,
-          "support": 190.0
+          "precision": 0.9387755102040817,
+          "recall": 0.9735449735449735,
+          "f1-score": 0.9558441558441558,
+          "support": 189.0
         },
-        "accuracy": 0.9327354260089686,
+        "accuracy": 0.9234234234234234,
         "macro avg": {
-          "precision": 0.88507326007326,
-          "recall": 0.8353269537480064,
-          "f1-score": 0.8575686608473494,
-          "support": 223.0
+          "precision": 0.8732339089481946,
+          "recall": 0.8049543049543049,
+          "f1-score": 0.8338542813119084,
+          "support": 222.0
         },
         "weighted avg": {
-          "precision": 0.9298814040966508,
-          "recall": 0.9327354260089686,
-          "f1-score": 0.9304154641212643,
-          "support": 223.0
+          "precision": 0.9192901692901694,
+          "recall": 0.9234234234234234,
+          "f1-score": 0.9195768958480822,
+          "support": 222.0
         }
       },
       "confusion_matrix": [
         [
-          185,
+          184,
           5
         ],
         [
-          10,
-          23
+          12,
+          21
         ]
       ]
     },
     "high_recall_operating_point": {
-      "threshold": 0.04232800006866455,
+      "threshold": 0.03702455759048462,
       "classification_report": {
         "DME": {
-          "precision": 0.6842105263157895,
-          "recall": 0.7878787878787878,
-          "f1-score": 0.7323943661971831,
+          "precision": 0.5686274509803921,
+          "recall": 0.8787878787878788,
+          "f1-score": 0.6904761904761905,
           "support": 33.0
         },
         "NORMAL": {
-          "precision": 0.9621621621621622,
-          "recall": 0.9368421052631579,
-          "f1-score": 0.9493333333333334,
-          "support": 190.0
+          "precision": 0.9766081871345029,
+          "recall": 0.8835978835978836,
+          "f1-score": 0.9277777777777778,
+          "support": 189.0
         },
-        "accuracy": 0.9147982062780269,
+        "accuracy": 0.8828828828828829,
         "macro avg": {
-          "precision": 0.8231863442389759,
-          "recall": 0.8623604465709729,
-          "f1-score": 0.8408638497652583,
-          "support": 223.0
+          "precision": 0.7726178190574475,
+          "recall": 0.8811928811928812,
+          "f1-score": 0.8091269841269841,
+          "support": 222.0
         },
         "weighted avg": {
-          "precision": 0.9210303057364658,
-          "recall": 0.9147982062780269,
-          "f1-score": 0.9172302574791048,
-          "support": 223.0
+          "precision": 0.9159624020305134,
+          "recall": 0.8828828828828829,
+          "f1-score": 0.8925032175032175,
+          "support": 222.0
         }
       },
       "confusion_matrix": [
         [
-          178,
-          12
+          167,
+          22
         ],
         [
-          7,
-          26
+          4,
+          29
         ]
       ]
     }
   },
   "dme_calibration_metrics": {
-    "brier_score": 0.052565825910177166,
-    "log_loss": 0.19779134443343788,
+    "brier_score": 0.05622670473674394,
+    "log_loss": 0.21680895827577648,
     "note": "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific operating point -- not shipped, see README round 8."
   }
 }
