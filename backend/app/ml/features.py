@@ -23,51 +23,42 @@ from PIL import Image
 from scipy import ndimage
 from skimage.feature import hog
 
+from app.ml.signal_utils import flatten_band, smooth, tissue_extent
+
 HOG_SIZE = 64
 
 # Kept in sync with app/services/segmentation.py's darkness heuristic.
 _DARKNESS_OFFSET = 0.20
 
 
-def _smooth(profile: np.ndarray, window: int) -> np.ndarray:
-    window = max(3, window)
-    kernel = np.ones(window) / window
-    return np.convolve(profile, kernel, mode="same")
-
-
-def _retinal_band(gray: np.ndarray) -> tuple[int, int]:
-    """Rough vertical extent of the retinal tissue: rows whose mean brightness
-    is above a fraction of the peak row brightness. Thickening (a DME sign)
-    widens this band.
-    """
-    row_profile = _smooth(gray.mean(axis=1), window=max(3, gray.shape[0] // 40))
-    threshold = 0.35 * row_profile.max()
-    bright_rows = np.where(row_profile > threshold)[0]
-    if bright_rows.size == 0:
-        return 0, gray.shape[0]
-    return int(bright_rows.min()), int(bright_rows.max())
-
-
 def _domain_features(gray: np.ndarray) -> np.ndarray:
     height = gray.shape[0]
-    top, bottom = _retinal_band(gray)
-    band = gray[top:bottom, :]
+    # Per-column tissue extent (round 24; previously a single row-profile
+    # averaged across the whole image width, like segmentation.py's boundary
+    # detection before round 23 -- see that module's docstring for why a
+    # single global profile smears together depths that don't correspond to
+    # the same anatomy on a curved/rotated real scan).
+    top, bottom = tissue_extent(gray)
 
-    band_top_frac = top / height
-    band_bottom_frac = bottom / height
-    band_thickness_frac = (bottom - top) / height
+    band_top_frac = float(top.mean()) / height
+    band_bottom_frac = float(bottom.mean()) / height
+    band_thickness_frac = float((bottom - top).mean()) / height
 
-    if band.size == 0:
+    flat, valid = flatten_band(gray, top, bottom)
+    if not valid.any():
         dark_area_frac = 0.0
         dark_zone_count_norm = 0.0
     else:
-        row_baseline = _smooth(band.mean(axis=1), window=max(3, band.shape[0] // 20))[:, None]
-        dark_mask = band < (row_baseline - _DARKNESS_OFFSET)
-        dark_area_frac = float(dark_mask.mean())
+        row_count = valid.sum(axis=1)
+        row_sum = np.where(valid, flat, 0.0).sum(axis=1)
+        row_mean = np.divide(row_sum, row_count, out=np.zeros_like(row_sum), where=row_count > 0)
+        row_baseline = smooth(row_mean, window=max(3, flat.shape[0] // 20))[:, None]
+        dark_mask = valid & (flat < (row_baseline - _DARKNESS_OFFSET))
+        dark_area_frac = float(dark_mask.sum()) / float(valid.sum())
         _, num_zones = ndimage.label(dark_mask)
         dark_zone_count_norm = min(num_zones / 50.0, 1.0)
 
-    row_profile = _smooth(gray.mean(axis=1), window=max(3, height // 40))
+    row_profile = smooth(gray.mean(axis=1), window=max(3, height // 40))
     profile_std = float(row_profile.std())
     profile_max = float(row_profile.max())
 

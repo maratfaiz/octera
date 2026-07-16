@@ -42,6 +42,8 @@ import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
 
+from app.ml.signal_utils import flatten_band, smooth, tissue_extent
+
 LAYERS = [
     "nfl_gcl",  # nerve fiber layer / ganglion cell layer
     "ipl_inl",  # inner plexiform / inner nuclear layer
@@ -86,22 +88,6 @@ class SegmentationOutput:
     pathology_zone_count: int
 
 
-def _gradient_magnitude(gray: np.ndarray) -> np.ndarray:
-    gy, gx = np.gradient(gray)
-    magnitude = np.sqrt(gx**2 + gy**2)
-    magnitude -= magnitude.min()
-    peak = magnitude.max()
-    if peak > 0:
-        magnitude /= peak
-    return magnitude
-
-
-def _smooth(profile: np.ndarray, window: int) -> np.ndarray:
-    window = max(3, window)
-    kernel = np.ones(window) / window
-    return np.convolve(profile, kernel, mode="same")
-
-
 def _find_peaks(profile: np.ndarray, min_distance: int) -> list[int]:
     peaks: list[int] = []
     for i in range(1, len(profile) - 1):
@@ -114,7 +100,7 @@ def _find_peaks(profile: np.ndarray, min_distance: int) -> list[int]:
 
 
 def _column_peaks(gray: np.ndarray, col: int, window: int, min_distance: int) -> list[int]:
-    profile = _smooth(gray[:, col], window)
+    profile = smooth(gray[:, col], window)
     return _find_peaks(profile, min_distance)
 
 
@@ -128,7 +114,7 @@ def _seed_column(gray: np.ndarray, window: int, min_distance: int, needed: int) 
     step = max(1, width // 60)
     best_col, best_score = None, -1.0
     for col in range(0, width, step):
-        profile = _smooth(gray[:, col], window)
+        profile = smooth(gray[:, col], window)
         peaks = _find_peaks(profile, min_distance)
         if len(peaks) < needed:
             continue
@@ -158,7 +144,7 @@ def _track_boundaries(gray: np.ndarray) -> np.ndarray:
         return np.tile(flat[:, None], (1, width))
 
     seed_peaks = _column_peaks(gray, seed_col, window, min_distance)
-    seed_profile = _smooth(gray[:, seed_col], window)
+    seed_profile = smooth(gray[:, seed_col], window)
     top_by_prominence = np.argsort([seed_profile[p] for p in seed_peaks])[-needed:]
     seed_positions = sorted(np.array(seed_peaks)[top_by_prominence].tolist())
 
@@ -188,69 +174,10 @@ def _track_boundaries(gray: np.ndarray) -> np.ndarray:
 
     smooth_window = max(3, width // 30)
     for i in range(needed):
-        boundaries[i] = _smooth(boundaries[i], smooth_window)
+        boundaries[i] = smooth(boundaries[i], smooth_window)
     for i in range(1, needed):
         boundaries[i] = np.maximum(boundaries[i], boundaries[i - 1] + 1)
     return np.clip(boundaries, 0, height - 1)
-
-
-def _tissue_extent(gray: np.ndarray, threshold_frac: float = 0.25) -> tuple[np.ndarray, np.ndarray]:
-    """Per-column top/bottom of the actual tissue signal, as opposed to background.
-
-    Used to bound pathology-zone search independently of the fine-grained,
-    boundary-by-boundary layer tracking above -- a large dark pathological gap
-    (e.g. a cystoid cavity spanning much of the retina's visible height) can
-    make _track_boundaries lose track of individual layer borders inside it,
-    but the overall top/bottom extent of "there is retinal tissue here" is a
-    much simpler, more robust question this answers independently: a column's
-    own brightest point is still a reliable anchor even when a dark gap sits
-    between it and the next bright structure.
-    """
-    height, width = gray.shape
-    window = max(3, height // 40)
-    min_run = max(2, height // 50)
-    top = np.zeros(width)
-    bottom = np.full(width, float(height))
-    for col in range(width):
-        profile = _smooth(gray[:, col], window)
-        peak = profile.max()
-        if peak <= 0:
-            continue
-        above = profile >= (peak * threshold_frac)
-        # Require `min_run` consecutive rows above threshold, not just one -- a
-        # single noisy/bright pixel right at the very top edge would otherwise
-        # register as "tissue starts here", pulling background into the band.
-        run_lengths = np.convolve(above.astype(int), np.ones(min_run, dtype=int), mode="valid")
-        sustained = np.where(run_lengths >= min_run)[0]
-        if sustained.size:
-            top[col] = float(sustained[0])
-            bottom[col] = float(sustained[-1] + min_run)
-    smooth_window = max(3, width // 30)
-    return _smooth(top, smooth_window), _smooth(bottom, smooth_window)
-
-
-def _flatten_band(gray: np.ndarray, top: np.ndarray, bottom: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Shifts each column so row 0 = its own top boundary ("retina flattening"),
-    removing curvature so a simple row-wise baseline is meaningful again.
-    Returns (flattened values, validity mask) both shaped (max_band_height, width).
-    """
-    height, width = gray.shape
-    top_i = np.clip(np.round(top).astype(int), 0, height)
-    bottom_i = np.clip(np.round(bottom).astype(int), 0, height)
-    band_heights = np.maximum(bottom_i - top_i, 0)
-    max_h = int(band_heights.max()) if band_heights.size else 0
-    max_h = max(max_h, 1)
-
-    flat = np.zeros((max_h, width), dtype=gray.dtype)
-    valid = np.zeros((max_h, width), dtype=bool)
-    for col in range(width):
-        t, b = top_i[col], bottom_i[col]
-        if b <= t:
-            continue
-        seg = gray[t:b, col]
-        flat[: len(seg), col] = seg
-        valid[: len(seg), col] = True
-    return flat, valid
 
 
 def _detect_pathology_zones(gray: np.ndarray, boundaries) -> tuple[np.ndarray, int]:
@@ -259,14 +186,14 @@ def _detect_pathology_zones(gray: np.ndarray, boundaries) -> tuple[np.ndarray, i
     bottom = np.broadcast_to(np.asarray(boundaries[-1], dtype=float), (width,))
     mask = np.zeros_like(gray, dtype=bool)
 
-    flat, valid = _flatten_band(gray, top, bottom)
+    flat, valid = flatten_band(gray, top, bottom)
     if not valid.any():
         return mask, 0
 
     row_count = valid.sum(axis=1)
     row_sum = np.where(valid, flat, 0.0).sum(axis=1)
     row_mean = np.divide(row_sum, row_count, out=np.zeros_like(row_sum), where=row_count > 0)
-    row_baseline = _smooth(row_mean, window=max(3, flat.shape[0] // 20))[:, None]
+    row_baseline = smooth(row_mean, window=max(3, flat.shape[0] // 20))[:, None]
 
     dark_mask = valid & (flat < (row_baseline - DARKNESS_OFFSET))
     labeled, num_features = ndimage.label(dark_mask)
@@ -357,7 +284,7 @@ def segment_layers(image_path: str) -> SegmentationOutput:
         for layer, top, bottom in zip(LAYERS, boundaries, boundaries[1:])
     }
 
-    tissue_top, tissue_bottom = _tissue_extent(gray)
+    tissue_top, tissue_bottom = tissue_extent(gray)
     pathology_mask, zone_count = _detect_pathology_zones(gray, [tissue_top, tissue_bottom])
     pathology_overlay = _draw_pathology_overlay(gray, pathology_mask)
     pathology_map_path = str(Path(image_path).with_name(f"{Path(image_path).stem}_pathology.png"))
