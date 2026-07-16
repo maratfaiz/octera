@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-16T06:26:24.621349+00:00",
+  "trained_at": "2026-07-16T07:22:47.738507+00:00",
   "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
   "n_samples": 1113,
   "n_train_samples_after_oversampling": 888,
@@ -143,5 +143,47 @@
     "brier_score": 0.07848956008636031,
     "log_loss": 0.2606412191434858,
     "note": "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific operating point -- not shipped, see README round 8."
+  },
+  "multi_seed_evaluation": {
+    "seeds": [
+      42,
+      7,
+      99,
+      123,
+      2024
+    ],
+    "test_accuracy": {
+      "mean": 0.9052489179390376,
+      "std": 0.015928955905348846,
+      "values": [
+        0.8755555555555555,
+        0.9074889867841409,
+        0.9070796460176991,
+        0.9130434782608695,
+        0.9230769230769231
+      ]
+    },
+    "dme_precision": {
+      "mean": 0.6433432808326425,
+      "std": 0.09639689991308713,
+      "values": [
+        0.4666666666666667,
+        0.72,
+        0.7021276595744681,
+        0.6136363636363636,
+        0.7142857142857143
+      ]
+    },
+    "dme_recall": {
+      "mean": 0.8646523867809057,
+      "std": 0.03837607642635109,
+      "values": [
+        0.84,
+        0.8372093023255814,
+        0.825,
+        0.9,
+        0.9210526315789473
+      ]
+    }
   }
 }

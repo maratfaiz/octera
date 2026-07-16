@@ -292,6 +292,47 @@ def _cv_threshold_analysis(
     return result
 
 
+def _multi_seed_evaluation(
+    X_all: np.ndarray,
+    labels: list[str],
+    split_groups: list[str],
+    estimator_factory,
+    seeds: tuple[int, ...] = (42, 7, 99, 123, 2024),
+) -> dict:
+    """Refits the winning model type across several train/test split seeds and
+    reports mean/std, instead of trusting the single split's numbers at face
+    value. Round 14 found DME precision on this small, patient-grouped dataset
+    swings from 0.47 to 0.72 depending on which split random_state is used --
+    a single split's numbers alone can mislead. The shipped checkpoint still
+    comes from one fixed split (random_state=42) for reproducibility; this is
+    purely a characterization exercise, saved to the model card for context.
+    """
+    y_all = np.array(labels)
+
+    def _summary(values: list[float]) -> dict:
+        return {"mean": float(np.mean(values)), "std": float(np.std(values)), "values": [float(v) for v in values]}
+
+    accuracies: list[float] = []
+    dme_precisions: list[float] = []
+    dme_recalls: list[float] = []
+    for seed in seeds:
+        train_idx, test_idx = _group_aware_split(labels, split_groups, random_state=seed)
+        model = estimator_factory()
+        model.fit(X_all[train_idx], y_all[train_idx])
+        preds = model.predict(X_all[test_idx])
+        rep = classification_report(y_all[test_idx], preds, output_dict=True, zero_division=0)
+        accuracies.append(rep["accuracy"])
+        dme_precisions.append(rep.get("DME", {}).get("precision", 0.0))
+        dme_recalls.append(rep.get("DME", {}).get("recall", 0.0))
+
+    return {
+        "seeds": list(seeds),
+        "test_accuracy": _summary(accuracies),
+        "dme_precision": _summary(dme_precisions),
+        "dme_recall": _summary(dme_recalls),
+    }
+
+
 def select_best_model(
     X: np.ndarray, y: np.ndarray, cv_folds: int = 4, groups: np.ndarray | None = None
 ) -> tuple[str, object, dict[str, float]]:
@@ -381,6 +422,26 @@ def main() -> None:
     print(f"Held-out test accuracy: {test_accuracy:.3f}")
     print(classification_report(y_test, preds))
 
+    multi_seed_metrics = None
+    if data_source != "synthetic" and args.minority_oversample == 1:
+        print("Evaluating across multiple train/test splits (round 15) to characterize typical performance:")
+        X_all = np.empty((len(raw_images), X_train.shape[1]), dtype=X_train.dtype)
+        X_all[train_idx] = X_train[: len(train_idx)]
+        X_all[test_idx] = X_test
+        multi_seed_metrics = _multi_seed_evaluation(X_all, labels, split_groups, lambda: _candidate_estimators()[best_name])
+        print(
+            f"  test accuracy: {multi_seed_metrics['test_accuracy']['mean']:.3f} "
+            f"(+/- {multi_seed_metrics['test_accuracy']['std']:.3f})"
+        )
+        print(
+            f"  DME precision: {multi_seed_metrics['dme_precision']['mean']:.3f} "
+            f"(+/- {multi_seed_metrics['dme_precision']['std']:.3f})"
+        )
+        print(
+            f"  DME recall: {multi_seed_metrics['dme_recall']['mean']:.3f} "
+            f"(+/- {multi_seed_metrics['dme_recall']['std']:.3f})"
+        )
+
     threshold_analysis = None
     calibration_metrics = None
     if "DME" in model.clf.classes_:
@@ -437,6 +498,7 @@ def main() -> None:
         "trained_on_real_patient_data": data_source != "synthetic",
         "dme_threshold_analysis": threshold_analysis,
         "dme_calibration_metrics": calibration_metrics,
+        "multi_seed_evaluation": multi_seed_metrics,
     }
     metrics_path = Path(args.out).with_name("metrics.json")
     metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False))
