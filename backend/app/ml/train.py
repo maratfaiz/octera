@@ -230,6 +230,37 @@ def _oversample_minority(
     return out_images, out_labels, out_groups
 
 
+def _rotation_augment(
+    images: list[np.ndarray],
+    labels: list[str],
+    groups: list[str] | None = None,
+    angles: tuple[int, ...] = (-10, -5, 5, 10),
+) -> tuple[list[np.ndarray], list[str], list[str] | None]:
+    """Adds copies of every image rotated by each angle in `angles`.
+
+    Round 19 found the shipped classifier's accuracy collapses under even mild
+    rotation -- e.g. a phone photo of a screen/printout rather than a direct
+    digital export, which is how a real patient actually sent one: test
+    accuracy dropped from 0.876 (no rotation) to 0.831 at +5 degrees and 0.453
+    at +15 degrees. Rounds 20-22 tried to detect/correct rotation at inference
+    time and found no signal reliable enough to ship (see README). Round 23
+    instead bakes robustness into training itself. Each augmented copy keeps
+    its source image's group so patient-grouped CV isn't broken by treating
+    rotated copies as unrelated to their source patient -- the same fix
+    applied to _oversample_minority above, and for the same reason.
+    """
+    out_images, out_labels = list(images), list(labels)
+    out_groups = list(groups) if groups is not None else None
+    for idx, (img, label) in enumerate(zip(images, labels)):
+        for angle in angles:
+            rotated = np.array(Image.fromarray(img).rotate(angle, resample=Image.BILINEAR, fillcolor=0))
+            out_images.append(rotated)
+            out_labels.append(label)
+            if out_groups is not None:
+                out_groups.append(groups[idx])
+    return out_images, out_labels, out_groups
+
+
 def _select_thresholds(y_true: np.ndarray, dme_proba: np.ndarray, min_recall: float = 0.85) -> dict:
     """Picks candidate DME probability cutoffs from a precision-recall curve.
 
@@ -407,6 +438,15 @@ def main() -> None:
         "count, capped at the majority class size. Default 1 (disabled): on this dataset, oversampling did not "
         "raise DME recall (same cases missed at every factor tried) and lowered precision -- see README.",
     )
+    parser.add_argument(
+        "--no-rotation-augment",
+        action="store_true",
+        help="Disable rotation-augmented training (round 23, real data only): by default, each real "
+        "training image is supplemented with copies rotated by -10/-5/+5/+10 degrees so the model "
+        "doesn't collapse on a mildly rotated photo (e.g. a phone photo of a screen/printout) -- see "
+        "README round 19/23. Measured to improve both the unrotated baseline and rotation robustness, "
+        "so it ships enabled by default; this flag reverts to the round 19-22 baseline behavior.",
+    )
     parser.add_argument("--out", type=str, default=str(DEFAULT_CHECKPOINT_PATH))
     args = parser.parse_args()
 
@@ -457,8 +497,26 @@ def main() -> None:
     best_name, best_estimator, cv_scores = select_best_model(X_train, y_train, groups=groups_train)
     print(f"Selected: {best_name} (cv balanced accuracy = {cv_scores[best_name]:.3f})")
 
+    # Round 23: rotation-augmented training (see _rotation_augment). Candidate selection
+    # above still runs on the un-augmented split, matching every prior round's
+    # methodology -- only the model that's actually fit/shipped/thresholded changes.
+    fit_images_train, fit_labels_train, fit_groups_train = images_train, labels_train, groups_train
+    if data_source != "synthetic" and not args.no_rotation_augment:
+        groups_train_list = list(groups_train) if groups_train is not None else None
+        fit_images_train, fit_labels_train, fit_groups_list = _rotation_augment(
+            images_train, labels_train, groups_train_list
+        )
+        fit_groups_train = np.array(fit_groups_list) if fit_groups_list is not None else None
+        print(f"Rotation-augmented training split (round 23): {len(images_train)} -> {len(fit_images_train)} images")
+
+    if fit_images_train is images_train:
+        X_train_fit, y_train_fit = X_train, y_train
+    else:
+        X_train_fit = np.stack([extract_features(Image.fromarray(img)) for img in fit_images_train])
+        y_train_fit = np.array(fit_labels_train)
+
     model = OCTClassifier(best_estimator)
-    model.fit(X_train, y_train)
+    model.fit(X_train_fit, y_train_fit)
 
     preds = model.clf.predict(X_test)
     test_accuracy = accuracy_score(y_test, preds)
@@ -513,7 +571,7 @@ def main() -> None:
 
         print("Selecting DME decision thresholds via out-of-fold CV on the training split (not the test set):")
         threshold_analysis = _cv_threshold_analysis(
-            X_train, y_train, y_test, test_dme_proba, best_estimator, groups_train=groups_train
+            X_train_fit, y_train_fit, y_test, test_dme_proba, best_estimator, groups_train=fit_groups_train
         )
         best = threshold_analysis["best_f1_operating_point"]
         print(
@@ -548,8 +606,15 @@ def main() -> None:
         # metrics in this model card describe the held-out-validated *approach*, not
         # a measurement of this exact final artifact.
         print("Retraining final checkpoint on 100% of the data (round 16) for shipping:")
+        if data_source != "synthetic" and not args.no_rotation_augment:
+            full_images, full_labels, _ = _rotation_augment(raw_images, labels)
+            X_full = np.stack([extract_features(Image.fromarray(img)) for img in full_images])
+            y_full = np.array(full_labels)
+            print(f"Rotation-augmented full dataset for final refit: {len(raw_images)} -> {len(full_images)} images")
+        else:
+            X_full, y_full = X_all, y_all
         model = OCTClassifier(_candidate_estimators()[best_name])
-        model.fit(X_all, y_all)
+        model.fit(X_full, y_full)
         shipped_on_full_dataset = True
 
     model.save(args.out)
@@ -561,6 +626,8 @@ def main() -> None:
         "n_samples": len(raw_images),
         "n_train_samples_after_oversampling": len(images_train),
         "minority_oversample_factor": args.minority_oversample,
+        "rotation_augment_enabled": data_source != "synthetic" and not args.no_rotation_augment,
+        "n_train_samples_after_rotation_augment": len(fit_images_train),
         "classes": CLASSES,
         "selected_model": best_name,
         "cv_balanced_accuracy_by_model": cv_scores,
