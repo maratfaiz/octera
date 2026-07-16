@@ -347,11 +347,12 @@ def _cv_threshold_analysis(
 
 
 def _multi_seed_evaluation(
-    X_all: np.ndarray,
+    raw_images: list[np.ndarray],
     labels: list[str],
     split_groups: list[str],
     estimator_factory,
     seeds: tuple[int, ...] = (42, 7, 99, 123, 2024),
+    rotation_augment: bool = False,
 ) -> dict:
     """Refits the winning model type across several train/test split seeds and
     reports mean/std, instead of trusting the single split's numbers at face
@@ -360,6 +361,16 @@ def _multi_seed_evaluation(
     a single split's numbers alone can mislead. The shipped checkpoint still
     comes from one fixed split (random_state=42) for reproducibility; this is
     purely a characterization exercise, saved to the model card for context.
+
+    When `rotation_augment` is set (round 23), each seed's training split is
+    rotation-augmented before fitting, matching whatever recipe actually
+    produces the shipped checkpoint -- round 23 originally left this
+    characterization describing the pre-round-23 recipe even after the
+    augmented recipe shipped, which would have made this field describe a
+    model no longer in production. Costs 5x the feature extraction of the
+    non-augmented path (each seed's augmented training images are re-extracted
+    from scratch, since the augmented set differs per seed), but this function
+    is already documented as a characterization exercise, not a hot path.
     """
     y_all = np.array(labels)
 
@@ -372,9 +383,18 @@ def _multi_seed_evaluation(
     skipped_seeds: list[int] = []
     for seed in seeds:
         train_idx, test_idx = _group_aware_split(labels, split_groups, random_state=seed)
+        train_images = [raw_images[i] for i in train_idx]
+        train_labels = [labels[i] for i in train_idx]
+        if rotation_augment:
+            train_images, train_labels, _ = _rotation_augment(train_images, train_labels)
+
+        X_train_seed = np.stack([extract_features(Image.fromarray(img)) for img in train_images])
+        y_train_seed = np.array(train_labels)
+        X_test_seed = np.stack([extract_features(Image.fromarray(raw_images[i])) for i in test_idx])
+
         model = estimator_factory()
-        model.fit(X_all[train_idx], y_all[train_idx])
-        preds = model.predict(X_all[test_idx])
+        model.fit(X_train_seed, y_train_seed)
+        preds = model.predict(X_test_seed)
         rep = classification_report(y_all[test_idx], preds, output_dict=True, zero_division=0)
         accuracies.append(rep["accuracy"])
         # A grouped split can, on this small dataset, draw a test fold with zero true
@@ -390,6 +410,7 @@ def _multi_seed_evaluation(
 
     return {
         "seeds": list(seeds),
+        "rotation_augment": rotation_augment,
         "test_accuracy": _summary(accuracies),
         "dme_precision": _summary(dme_precisions),
         "dme_recall": _summary(dme_recalls),
@@ -535,7 +556,13 @@ def main() -> None:
     multi_seed_metrics = None
     if X_all is not None:
         print("Evaluating across multiple train/test splits (round 15) to characterize typical performance:")
-        multi_seed_metrics = _multi_seed_evaluation(X_all, labels, split_groups, lambda: _candidate_estimators()[best_name])
+        multi_seed_metrics = _multi_seed_evaluation(
+            raw_images,
+            labels,
+            split_groups,
+            lambda: _candidate_estimators()[best_name],
+            rotation_augment=not args.no_rotation_augment,
+        )
         print(
             f"  test accuracy: {multi_seed_metrics['test_accuracy']['mean']:.3f} "
             f"(+/- {multi_seed_metrics['test_accuracy']['std']:.3f})"
