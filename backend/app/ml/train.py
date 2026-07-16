@@ -44,6 +44,7 @@ from sklearn.metrics import (
     log_loss,
     precision_recall_curve,
 )
+from sklearn.decomposition import PCA
 from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, cross_val_predict, cross_val_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import make_pipeline
@@ -80,6 +81,15 @@ def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
         ),
         "svm_rbf": make_pipeline(
             StandardScaler(),
+            SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
+        ),
+        # Round 11: the 1578-dim HOG+domain vector against ~700-900 patient-grouped
+        # training images is a high-dim/low-N regime prone to overfitting, especially
+        # for SVM. PCA(30) ahead of svm_rbf measured cv balanced accuracy 0.879 vs
+        # 0.816-0.831 for every un-reduced or MLP+PCA combination tried -- see README.
+        "svm_rbf_pca30": make_pipeline(
+            StandardScaler(),
+            PCA(n_components=30, random_state=random_state),
             SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
         ),
     }

@@ -28,11 +28,19 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 # A patient-grouped split (_group_aware_split) fixed that and produced more
 # modest, but still real, honest numbers: at 0.037, test recall is 0.88 with
 # precision 0.57 (the un-thresholded 50% cutoff's honest recall dropped to
-# 0.64 from the previously-reported, leaky 0.67). See app/ml/artifacts/
-# metrics.json and the README for the full history across rounds 5/6/10.
-# Revisit this number if app/ml/train.py is rerun and the model card's
-# high-recall cutoff moves.
-DME_SCREENING_THRESHOLD = 0.037
+# 0.64 from the previously-reported, leaky 0.67).
+#
+# Round 11 swapped the shipped model itself: PCA(30)+SVM scored notably higher
+# on patient-grouped CV (balanced accuracy 0.879 vs 0.817 for the previous
+# MLP) and, at the plain 50% argmax cutoff, already gets test recall 0.88 /
+# precision 0.71 -- no threshold trick needed to reach round 10's recall
+# target. The recall>=0.85-on-CV cutoff for *this* model is 0.260 (test
+# recall 0.88 / precision 0.66, about the same operating point argmax already
+# gives, just confirmed by the same CV-selection method as before for
+# consistency). See app/ml/artifacts/metrics.json and the README for the full
+# history across rounds 5/6/10/11. Revisit this number if app/ml/train.py is
+# rerun and the model card's high-recall cutoff moves.
+DME_SCREENING_THRESHOLD = 0.260
 
 
 def generate_report(

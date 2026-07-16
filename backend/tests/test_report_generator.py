@@ -47,8 +47,8 @@ def test_normal_case_recommends_routine_followup():
 
 def test_dme_below_argmax_but_above_screening_threshold_is_flagged():
     diagnoses = [
-        Diagnosis(code="NORMAL", label="Без признаков патологии", probability=0.9),
-        Diagnosis(code="DME", label="Диабетический макулярный отек", probability=0.1),
+        Diagnosis(code="NORMAL", label="Без признаков патологии", probability=0.7),
+        Diagnosis(code="DME", label="Диабетический макулярный отек", probability=0.3),
     ]
     report = generate_report(
         quality_score=0.9, quality_issues=[], layer_thickness_um={"rpe": 40.0}, diagnoses=diagnoses
