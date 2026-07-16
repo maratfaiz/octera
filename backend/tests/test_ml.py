@@ -9,6 +9,25 @@ from app.ml.train import select_best_model
 from app.services.diagnosis import predict_diagnoses
 
 
+def test_select_best_model_picks_a_valid_candidate_with_groups():
+    """select_best_model gained a `groups` param (StratifiedGroupKFold branch) for
+    patient-grouped CV, but the only prior test of this function never passed
+    groups, so that branch went unexercised by any test.
+    """
+    raw_images, labels = generate_dataset(n_per_class=30, seed=3)
+    X = np.stack([extract_features(Image.fromarray(img)) for img in raw_images])
+    y = np.array(labels)
+    # Each synthetic image gets its own singleton group -- a no-op grouping
+    # constraint that still forces the StratifiedGroupKFold code path to run.
+    groups = np.array([str(i) for i in range(len(labels))])
+
+    best_name, best_estimator, scores = select_best_model(X, y, cv_folds=3, groups=groups)
+
+    assert best_name in scores
+    assert scores[best_name] == max(scores.values())
+    assert best_estimator is not None
+
+
 def test_synthetic_training_beats_random_chance():
     raw_images, labels = generate_dataset(n_per_class=60, seed=1)
     X = np.stack([extract_features(Image.fromarray(img)) for img in raw_images])

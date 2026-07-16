@@ -11,6 +11,7 @@ from app.models.patient import Patient
 from app.models.study import Study
 from app.schemas.analysis import AnalysisResultRead, AnalysisSummary
 from app.services.pipeline import run_analysis_pipeline
+from app.services.report_generator import resolve_flagged_diagnosis
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -39,7 +40,9 @@ def list_analysis_history(
             study_id=r.study_id,
             created_at=r.created_at,
             quality_score=r.quality_score,
-            top_diagnosis=r.diagnoses[0] if r.diagnoses else None,
+            # Matches generate_report's DME-screening logic (see report_generator.py)
+            # so a study flagged in its detail report isn't shown as unremarkable here.
+            top_diagnosis=resolve_flagged_diagnosis(r.diagnoses),
         )
         for r in results
     ]

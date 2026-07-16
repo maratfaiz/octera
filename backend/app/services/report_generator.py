@@ -6,6 +6,10 @@ Ollama) that is fed the same structured findings — never let the model
 introduce findings that are not present in the input.
 """
 
+import json
+from typing import Any
+
+from app.ml.model import DEFAULT_CHECKPOINT_PATH
 from app.services.diagnosis import Diagnosis
 from app.services.segmentation import LAYER_LABELS_RU
 
@@ -50,9 +54,51 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 # harder one for precision specifically: other split seeds tried in the README
 # give precision 0.61-0.72 at similar recall, so treat 0.50 as a real but
 # somewhat pessimistic draw rather than a genuine regression from round 11).
-# Revisit this number if app/ml/train.py is rerun and the model card's
-# high-recall cutoff moves.
-DME_SCREENING_THRESHOLD = 0.350
+# This used to be a hand-copied literal that a human had to remember to update
+# every time app/ml/train.py was rerun -- it had already drifted from the
+# shipped checkpoint's actual metrics.json (0.350 vs. the real 0.3497...) by
+# the time this was caught in review. It's now loaded from metrics.json
+# (written alongside the checkpoint by train.py) at import time, falling back
+# to this historical value only if metrics.json is missing or malformed (e.g.
+# a checkpoint-less dev environment).
+_FALLBACK_DME_SCREENING_THRESHOLD = 0.350
+
+
+def _load_dme_screening_threshold() -> float:
+    metrics_path = DEFAULT_CHECKPOINT_PATH.parent / "metrics.json"
+    try:
+        metrics: dict[str, Any] = json.loads(metrics_path.read_text())
+        threshold = metrics["dme_threshold_analysis"]["high_recall_operating_point"]["threshold"]
+        return float(threshold)
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return _FALLBACK_DME_SCREENING_THRESHOLD
+
+
+DME_SCREENING_THRESHOLD = _load_dme_screening_threshold()
+
+
+def _field(diagnosis: Any, name: str) -> Any:
+    # diagnoses arrive as Diagnosis dataclass instances fresh from the model
+    # (app.services.diagnosis) but as plain {code, label, probability} dicts
+    # once round-tripped through AnalysisResult's JSON column -- accept both.
+    return diagnosis[name] if isinstance(diagnosis, dict) else getattr(diagnosis, name)
+
+
+def resolve_flagged_diagnosis(diagnoses: list) -> Any | None:
+    """Returns whichever diagnosis is clinically operative for this study.
+
+    That's DME if it clears the screening threshold -- even when NORMAL is
+    still the nominally more likely class -- otherwise the plain top
+    (highest-probability) diagnosis. Used both for the free-text report and
+    for the analysis-history list, so the two views of the same study can't
+    disagree about whether a case was flagged.
+    """
+    if not diagnoses:
+        return None
+    dme = next((d for d in diagnoses if _field(d, "code") == "DME"), None)
+    if dme is not None and _field(dme, "probability") >= DME_SCREENING_THRESHOLD:
+        return dme
+    return diagnoses[0]
 
 
 def generate_report(
@@ -108,7 +154,7 @@ def generate_report(
     else:
         lines.append("Признаков патологии с высокой вероятностью не обнаружено. Рекомендовано плановое наблюдение.")
 
-    flagged = dme if dme_flagged else top
+    flagged = resolve_flagged_diagnosis(diagnoses)
     if flagged and flagged.probability < LOW_CONFIDENCE_THRESHOLD:
         lines.append("")
         lines.append(

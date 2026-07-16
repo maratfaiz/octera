@@ -71,11 +71,12 @@ def test_oversample_minority_tops_up_without_touching_majority():
     images = normal_images + dme_images
     labels = ["NORMAL"] * 8 + ["DME"] * 2
 
-    out_images, out_labels = _oversample_minority(images, labels, rng, max_factor=3)
+    out_images, out_labels, out_groups = _oversample_minority(images, labels, rng, max_factor=3)
 
     assert out_labels.count("NORMAL") == 8
     assert out_labels.count("DME") == 6  # min(majority=8, minority=2 * factor=3) = 6
     assert len(out_images) == len(out_labels) == 14
+    assert out_groups is None
 
 
 def test_oversample_minority_caps_at_majority_size():
@@ -85,8 +86,34 @@ def test_oversample_minority_caps_at_majority_size():
     images = normal_images + dme_images
     labels = ["NORMAL"] * 5 + ["DME"] * 4
 
-    out_images, out_labels = _oversample_minority(images, labels, rng, max_factor=10)
+    out_images, out_labels, _ = _oversample_minority(images, labels, rng, max_factor=10)
 
     # 4 * 10 = 40, capped at the majority's 5.
     assert out_labels.count("DME") == 5
     assert out_labels.count("NORMAL") == 5
+
+
+def test_oversample_minority_keeps_augmented_copies_grouped_with_their_source():
+    """An earlier version of this flag dropped patient-grouping entirely for the
+    whole training split whenever oversampling ran, letting near-duplicate
+    augmented copies of the same source image land in different CV folds --
+    reintroducing the exact same-image leakage patient-grouping was built to
+    fix. Augmented copies must carry their source image's group instead.
+    """
+    rng = np.random.default_rng(0)
+    normal_images = [np.full((8, 8), i, dtype=np.uint8) for i in range(8)]
+    dme_images = [np.full((8, 8), 100 + i, dtype=np.uint8) for i in range(2)]
+    images = normal_images + dme_images
+    labels = ["NORMAL"] * 8 + ["DME"] * 2
+    groups = [f"patient-{i}" for i in range(8)] + ["patient-dme-0", "patient-dme-1"]
+
+    out_images, out_labels, out_groups = _oversample_minority(images, labels, rng, groups=groups, max_factor=3)
+
+    assert out_groups is not None
+    assert len(out_groups) == len(out_images) == len(out_labels)
+    # Every augmented DME copy's group must be one of the original DME patients' --
+    # never an unrelated/unset group.
+    original_dme_groups = {"patient-dme-0", "patient-dme-1"}
+    for label, group in zip(out_labels[10:], out_groups[10:]):
+        assert label == "DME"
+        assert group in original_dme_groups

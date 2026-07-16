@@ -187,8 +187,12 @@ def _group_aware_split(
 
 
 def _oversample_minority(
-    images: list[np.ndarray], labels: list[str], rng: np.random.Generator, max_factor: int = 4
-) -> tuple[list[np.ndarray], list[str]]:
+    images: list[np.ndarray],
+    labels: list[str],
+    rng: np.random.Generator,
+    groups: list[str] | None = None,
+    max_factor: int = 4,
+) -> tuple[list[np.ndarray], list[str], list[str] | None]:
     """Tops up under-represented classes with augmented copies of their own images.
 
     MLPClassifier (the model round 3 selected) has no `class_weight` knob, so this
@@ -198,19 +202,32 @@ def _oversample_minority(
     disabled by default (see the --minority-oversample flag and the README).
     Capped at `max_factor`x the original count per class so it stays a top-up,
     not a full rebalance to majority size.
+
+    If `groups` is given, each augmented copy is assigned its source image's group
+    (patient) rather than being left ungrouped -- an earlier version of this flag
+    dropped grouping entirely for the whole training split when combined with
+    oversampling, letting near-duplicate augmented copies of the same source image
+    land in different folds of the internal (group-aware) CV, reintroducing exactly
+    the same-image leakage patient-grouping was built to eliminate.
     """
     counts = Counter(labels)
     majority_count = max(counts.values())
-    images_by_class = {cls: [img for img, lbl in zip(images, labels) if lbl == cls] for cls in counts}
+    indices_by_class: dict[str, list[int]] = {}
+    for i, lbl in enumerate(labels):
+        indices_by_class.setdefault(lbl, []).append(i)
 
     out_images, out_labels = list(images), list(labels)
+    out_groups = list(groups) if groups is not None else None
     for cls, count in counts.items():
         target = min(majority_count, count * max_factor)
-        cls_images = images_by_class[cls]
+        cls_indices = indices_by_class[cls]
         for i in range(target - count):
-            out_images.append(augment_image(cls_images[i % len(cls_images)], rng))
+            src_idx = cls_indices[i % len(cls_indices)]
+            out_images.append(augment_image(images[src_idx], rng))
             out_labels.append(cls)
-    return out_images, out_labels
+            if out_groups is not None:
+                out_groups.append(groups[src_idx])
+    return out_images, out_labels, out_groups
 
 
 def _select_thresholds(y_true: np.ndarray, dme_proba: np.ndarray, min_recall: float = 0.85) -> dict:
@@ -241,7 +258,13 @@ def _metrics_at_threshold(y_true: np.ndarray, dme_proba: np.ndarray, threshold: 
     preds = np.where(dme_proba >= threshold, "DME", "NORMAL")
     return {
         "threshold": float(threshold),
-        "classification_report": classification_report(y_true, preds, output_dict=True),
+        # labels=CLASSES (matching confusion_matrix below) guarantees a "DME" key is
+        # always present, even if a small patient-grouped fold happens to contain no
+        # true or predicted DME -- main() indexes ['DME'] unconditionally below, and
+        # without this, sklearn simply omits the key and that indexing raises KeyError.
+        "classification_report": classification_report(
+            y_true, preds, labels=CLASSES, output_dict=True, zero_division=0
+        ),
         "confusion_matrix": confusion_matrix(y_true, preds, labels=CLASSES).tolist(),
     }
 
@@ -315,6 +338,7 @@ def _multi_seed_evaluation(
     accuracies: list[float] = []
     dme_precisions: list[float] = []
     dme_recalls: list[float] = []
+    skipped_seeds: list[int] = []
     for seed in seeds:
         train_idx, test_idx = _group_aware_split(labels, split_groups, random_state=seed)
         model = estimator_factory()
@@ -322,14 +346,23 @@ def _multi_seed_evaluation(
         preds = model.predict(X_all[test_idx])
         rep = classification_report(y_all[test_idx], preds, output_dict=True, zero_division=0)
         accuracies.append(rep["accuracy"])
-        dme_precisions.append(rep.get("DME", {}).get("precision", 0.0))
-        dme_recalls.append(rep.get("DME", {}).get("recall", 0.0))
+        # A grouped split can, on this small dataset, draw a test fold with zero true
+        # DME cases -- "DME" key is then absent from rep entirely. That's different
+        # from the model genuinely scoring 0 precision/recall on a fold that DID have
+        # DME cases; silently defaulting both to 0.0 would understate the real mean/std
+        # by mixing in seeds that had nothing to score. Exclude those seeds instead.
+        if "DME" in rep:
+            dme_precisions.append(rep["DME"]["precision"])
+            dme_recalls.append(rep["DME"]["recall"])
+        else:
+            skipped_seeds.append(seed)
 
     return {
         "seeds": list(seeds),
         "test_accuracy": _summary(accuracies),
         "dme_precision": _summary(dme_precisions),
         "dme_recall": _summary(dme_recalls),
+        "seeds_skipped_no_dme_in_test_fold": skipped_seeds,
     }
 
 
@@ -343,10 +376,20 @@ def select_best_model(
     )
     scores: dict[str, float] = {}
     for name, estimator in _candidate_estimators().items():
-        fold_scores = cross_val_score(estimator, X, y, groups=groups, cv=cv, scoring="balanced_accuracy")
+        try:
+            fold_scores = cross_val_score(estimator, X, y, groups=groups, cv=cv, scoring="balanced_accuracy")
+        except ValueError as exc:
+            # e.g. svm_rbf_pca30's fixed PCA(n_components=30) needs at least 30 samples
+            # in every fold -- fine on the real dataset (folds in the hundreds) but not
+            # on a small synthetic/smoke-test run. Skip the candidate rather than crash
+            # the whole training run over one estimator that doesn't fit this dataset.
+            print(f"  {name}: skipped ({exc})")
+            continue
         scores[name] = float(fold_scores.mean())
         print(f"  {name}: cv balanced accuracy = {fold_scores.mean():.3f} (+/- {fold_scores.std():.3f})")
 
+    if not scores:
+        raise RuntimeError("No candidate estimator could be cross-validated on this dataset")
     best_name = max(scores, key=scores.get)
     return best_name, _candidate_estimators()[best_name], scores
 
@@ -398,11 +441,12 @@ def main() -> None:
     if args.minority_oversample > 1:
         rng = np.random.default_rng(42)
         before = Counter(labels_train)
-        images_train, labels_train = _oversample_minority(images_train, labels_train, rng, args.minority_oversample)
+        groups_train_list = list(groups_train) if groups_train is not None else None
+        images_train, labels_train, groups_train_list = _oversample_minority(
+            images_train, labels_train, rng, groups=groups_train_list, max_factor=args.minority_oversample
+        )
+        groups_train = np.array(groups_train_list) if groups_train_list is not None else None
         print(f"Oversampled minority classes in training split: {dict(before)} -> {dict(Counter(labels_train))}")
-        # Augmented copies aren't tied to a well-defined patient group; skip group-aware
-        # internal CV rather than mis-group them (this flag ships disabled by default).
-        groups_train = None
 
     X_train = np.stack([extract_features(Image.fromarray(img)) for img in images_train])
     X_test = np.stack([extract_features(Image.fromarray(img)) for img in images_test])
@@ -484,6 +528,13 @@ def main() -> None:
                 f"(test precision {high_recall['classification_report']['DME']['precision']:.2f} / "
                 f"recall {high_recall['classification_report']['DME']['recall']:.2f})"
             )
+    else:
+        print(
+            f"WARNING: training split has no DME examples (classes seen: {list(model.clf.classes_)}) -- "
+            "skipping DME threshold/calibration analysis. This usually indicates a data-loading or "
+            "labeling problem rather than an expected outcome; the shipped checkpoint's metrics.json "
+            "will have null dme_threshold_analysis/dme_calibration_metrics fields as a result."
+        )
 
     shipped_on_full_dataset = False
     if X_all is not None:
