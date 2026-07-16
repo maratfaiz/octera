@@ -38,9 +38,20 @@ LOW_CONFIDENCE_THRESHOLD = 0.5
 # recall 0.88 / precision 0.66, about the same operating point argmax already
 # gives, just confirmed by the same CV-selection method as before for
 # consistency). See app/ml/artifacts/metrics.json and the README for the full
-# history across rounds 5/6/10/11. Revisit this number if app/ml/train.py is
-# rerun and the model card's high-recall cutoff moves.
-DME_SCREENING_THRESHOLD = 0.260
+# history across rounds 5/6/10/11.
+#
+# Round 14 found a third leak: 12 pairs of byte-identical images filed under
+# two different nominal patient IDs (likely a duplicate-entry artifact in the
+# source dataset), 2 of which still crossed train/test under round 10's
+# patient-only grouping. Merging those into shared groups changed the
+# train/test split; recall>=0.85-on-CV for *this* split is 0.350 (test recall
+# 0.84 / precision 0.50 -- this specific reproducible split happens to be a
+# harder one for precision specifically: other split seeds tried in the README
+# give precision 0.61-0.72 at similar recall, so treat 0.50 as a real but
+# somewhat pessimistic draw rather than a genuine regression from round 11).
+# Revisit this number if app/ml/train.py is rerun and the model card's
+# high-recall cutoff moves.
+DME_SCREENING_THRESHOLD = 0.350
 
 
 def generate_report(

@@ -28,6 +28,7 @@ Usage:
 
 import argparse
 import csv
+import hashlib
 import json
 from collections import Counter
 from datetime import datetime, timezone
@@ -95,15 +96,53 @@ def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
     }
 
 
+def _merge_duplicate_groups(patient_ids: list[str], content_hashes: list[str]) -> list[str]:
+    """Merges patient-ID groups that share a byte-identical image under the hood.
+
+    Round 14 found 12 pairs of exact-duplicate image files in the dataset filed
+    under two *different* nominal patient IDs (adjacent/nearby IDs, e.g. 1330 and
+    1348 -- likely a duplicate-entry artifact in the source dataset, not a labeling
+    error: both members of every pair agree on DME). A patient-ID-only group-aware
+    split (round 10) doesn't catch this: 2 of those 12 pairs still ended up split
+    across train and test, since they nominally belong to different "patients" --
+    letting the model see the literal same scan at train time and trivially get it
+    right at test time. Union-find over (patient_id, content_hash) pairs merges any
+    patient IDs that ever share a duplicate image into one group.
+    """
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    by_hash: dict[str, list[str]] = {}
+    for pid, content_hash in zip(patient_ids, content_hashes):
+        by_hash.setdefault(content_hash, []).append(pid)
+    for pids in by_hash.values():
+        for other in pids[1:]:
+            union(pids[0], other)
+
+    return [find(pid) for pid in patient_ids]
+
+
 def _load_real_dataset(data_dir: str) -> tuple[list[np.ndarray], list[str], list[str]]:
     """Loads the OCT-AND-EYE-FUNDUS-DATASET layout: <data_dir>/OCT.csv +
     <data_dir>/OCT/OCT*/<Name>.jpg, labeled by the CSV's DME column.
 
-    Also returns a patient ID per image (the leading numeric ID in filenames
-    like "1222_OD_o_2" -- eye + visit index follow the underscore), since ~25%
-    of images share a patient with at least one other image in the dataset
-    (both eyes and/or repeat visits). See README round 10: this is needed for
-    a patient-grouped train/test split, not just a stratified one.
+    Also returns a group ID per image for a patient-grouped train/test split (see
+    README round 10): the leading numeric patient ID in filenames like
+    "1222_OD_o_2" (eye + visit index follow the underscore), since ~25% of images
+    share a patient with at least one other image in the dataset (both eyes
+    and/or repeat visits) -- with same-content duplicates across different nominal
+    patient IDs merged into one group (round 14, see _merge_duplicate_groups).
     """
     root = Path(data_dir)
     csv_path = root / "OCT.csv"
@@ -118,15 +157,19 @@ def _load_real_dataset(data_dir: str) -> tuple[list[np.ndarray], list[str], list
     images: list[np.ndarray] = []
     labels: list[str] = []
     patient_ids: list[str] = []
+    content_hashes: list[str] = []
     with csv_path.open(newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             path = image_index.get(row["Name"])
             if path is None:
                 continue
+            raw_bytes = path.read_bytes()
             images.append(np.array(Image.open(path).convert("L")))
             labels.append("DME" if row["DME"].strip() == "1" else "NORMAL")
             patient_ids.append(row["Name"].split("_")[0])
-    return images, labels, patient_ids
+            content_hashes.append(hashlib.md5(raw_bytes).hexdigest())
+    groups = _merge_duplicate_groups(patient_ids, content_hashes)
+    return images, labels, groups
 
 
 def _group_aware_split(

@@ -26,7 +26,7 @@ def test_low_confidence_finding_adds_warning():
         quality_score=0.9,
         quality_issues=[],
         layer_thickness_um={"rpe": 40.0},
-        diagnoses=_diagnoses(dme_probability=0.35),
+        diagnoses=_diagnoses(dme_probability=0.45),
     )
 
     assert "уверенность модели в этой находке низкая" in report
@@ -47,8 +47,8 @@ def test_normal_case_recommends_routine_followup():
 
 def test_dme_below_argmax_but_above_screening_threshold_is_flagged():
     diagnoses = [
-        Diagnosis(code="NORMAL", label="Без признаков патологии", probability=0.7),
-        Diagnosis(code="DME", label="Диабетический макулярный отек", probability=0.3),
+        Diagnosis(code="NORMAL", label="Без признаков патологии", probability=0.6),
+        Diagnosis(code="DME", label="Диабетический макулярный отек", probability=0.4),
     ]
     report = generate_report(
         quality_score=0.9, quality_issues=[], layer_thickness_um={"rpe": 40.0}, diagnoses=diagnoses
