@@ -422,12 +422,17 @@ def main() -> None:
     print(f"Held-out test accuracy: {test_accuracy:.3f}")
     print(classification_report(y_test, preds))
 
-    multi_seed_metrics = None
+    X_all: np.ndarray | None = None
+    y_all: np.ndarray | None = None
     if data_source != "synthetic" and args.minority_oversample == 1:
-        print("Evaluating across multiple train/test splits (round 15) to characterize typical performance:")
         X_all = np.empty((len(raw_images), X_train.shape[1]), dtype=X_train.dtype)
         X_all[train_idx] = X_train[: len(train_idx)]
         X_all[test_idx] = X_test
+        y_all = np.array(labels)
+
+    multi_seed_metrics = None
+    if X_all is not None:
+        print("Evaluating across multiple train/test splits (round 15) to characterize typical performance:")
         multi_seed_metrics = _multi_seed_evaluation(X_all, labels, split_groups, lambda: _candidate_estimators()[best_name])
         print(
             f"  test accuracy: {multi_seed_metrics['test_accuracy']['mean']:.3f} "
@@ -480,6 +485,22 @@ def main() -> None:
                 f"recall {high_recall['classification_report']['DME']['recall']:.2f})"
             )
 
+    shipped_on_full_dataset = False
+    if X_all is not None:
+        # All metrics above (test_accuracy, threshold_analysis, calibration_metrics,
+        # multi_seed_metrics) were measured on a model trained on ~80% of the data --
+        # that's the honest way to estimate generalization. But this dataset is small
+        # (1113 images total) and every labeled image is precious, so the checkpoint
+        # actually shipped is refit on 100% of it (round 16), standard practice once
+        # validation is done: more real training data should only help, not hurt, a
+        # model that already generalized well on the held-out estimates above. The
+        # metrics in this model card describe the held-out-validated *approach*, not
+        # a measurement of this exact final artifact.
+        print("Retraining final checkpoint on 100% of the data (round 16) for shipping:")
+        model = OCTClassifier(_candidate_estimators()[best_name])
+        model.fit(X_all, y_all)
+        shipped_on_full_dataset = True
+
     model.save(args.out)
     print(f"Saved checkpoint to {args.out}")
 
@@ -499,6 +520,7 @@ def main() -> None:
         "dme_threshold_analysis": threshold_analysis,
         "dme_calibration_metrics": calibration_metrics,
         "multi_seed_evaluation": multi_seed_metrics,
+        "shipped_checkpoint_trained_on_full_dataset": shipped_on_full_dataset,
     }
     metrics_path = Path(args.out).with_name("metrics.json")
     metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False))

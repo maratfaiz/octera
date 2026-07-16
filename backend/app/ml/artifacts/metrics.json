@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-16T07:22:47.738507+00:00",
+  "trained_at": "2026-07-16T08:15:35.105902+00:00",
   "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
   "n_samples": 1113,
   "n_train_samples_after_oversampling": 888,
@@ -185,5 +185,6 @@
         0.9210526315789473
       ]
     }
-  }
+  },
+  "shipped_checkpoint_trained_on_full_dataset": true
 }
