@@ -38,6 +38,17 @@ LAYERS = [
     "rpe",
 ]
 
+# Human-readable Russian labels for LAYERS, for anywhere a clinician-facing view
+# (report text, UI) needs to show layer thickness -- the bare codes above are an
+# internal shorthand, not something to put in front of a doctor.
+LAYER_LABELS_RU = {
+    "nfl_gcl": "Слой нервных волокон / ганглиозных клеток (NFL/GCL)",
+    "ipl_inl": "Внутренний плексиформный / внутренний ядерный слой (IPL/INL)",
+    "opl_onl": "Наружный плексиформный / наружный ядерный слой (OPL/ONL)",
+    "photoreceptor": "Слой фоторецепторов",
+    "rpe": "Пигментный эпителий сетчатки (RPE)",
+}
+
 ASSUMED_UM_PER_PIXEL = 2.0
 
 # Heuristic pathology-zone detection parameters.

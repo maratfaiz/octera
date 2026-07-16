@@ -7,6 +7,7 @@ introduce findings that are not present in the input.
 """
 
 from app.services.diagnosis import Diagnosis
+from app.services.segmentation import LAYER_LABELS_RU
 
 LOW_CONFIDENCE_THRESHOLD = 0.5
 
@@ -72,7 +73,7 @@ def generate_report(
 
     lines.append("Толщина слоев сетчатки (мкм):")
     for layer, value in layer_thickness_um.items():
-        lines.append(f"  - {layer}: {value}")
+        lines.append(f"  - {LAYER_LABELS_RU.get(layer, layer)}: {value}")
     lines.append("")
 
     if pathology_zone_count > 0:

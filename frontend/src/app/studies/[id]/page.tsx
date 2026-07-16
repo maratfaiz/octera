@@ -7,6 +7,16 @@ import { ApiError, analysis, fetchImageObjectUrl, getToken, studies } from "@/li
 import type { AnalysisResult, Study } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 
+// Keep in sync with backend/app/services/segmentation.py's LAYER_LABELS_RU --
+// the raw codes are an internal shorthand, not something to show a doctor.
+const LAYER_LABELS_RU: Record<string, string> = {
+  nfl_gcl: "Слой нервных волокон / ганглиозных клеток (NFL/GCL)",
+  ipl_inl: "Внутренний плексиформный / внутренний ядерный слой (IPL/INL)",
+  opl_onl: "Наружный плексиформный / наружный ядерный слой (OPL/ONL)",
+  photoreceptor: "Слой фоторецепторов",
+  rpe: "Пигментный эпителий сетчатки (RPE)",
+};
+
 export default function StudyPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -114,7 +124,7 @@ export default function StudyPage() {
                     <p className="card-title">Толщина слоев сетчатки (мкм)</p>
                     {Object.entries(result.layer_thickness).map(([layer, value]) => (
                       <div key={layer} className="list-item">
-                        <span>{layer}</span>
+                        <span>{LAYER_LABELS_RU[layer] ?? layer}</span>
                         <span>{value}</span>
                       </div>
                     ))}
