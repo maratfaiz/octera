@@ -7,6 +7,7 @@ import { ApiError, analysis, fetchImageObjectUrl, getToken, studies } from "@/li
 import type { AnalysisResult, Study } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { APP_VERSION } from "@/lib/version";
+import { LAYER_LABELS_RU } from "@/lib/labels";
 import {
   ActivityIcon,
   AlertZoneIcon,
@@ -17,16 +18,6 @@ import {
   ReportIcon,
   RulerIcon,
 } from "@/components/icons";
-
-// Keep in sync with backend/app/services/segmentation.py's LAYER_LABELS_RU --
-// the raw codes are an internal shorthand, not something to show a doctor.
-const LAYER_LABELS_RU: Record<string, string> = {
-  nfl_gcl: "Слой нервных волокон / ганглиозных клеток (NFL/GCL)",
-  ipl_inl: "Внутренний плексиформный / внутренний ядерный слой (IPL/INL)",
-  opl_onl: "Наружный плексиформный / наружный ядерный слой (OPL/ONL)",
-  photoreceptor: "Слой фоторецепторов",
-  rpe: "Пигментный эпителий сетчатки (RPE)",
-};
 
 export default function StudyPage() {
   const { id } = useParams<{ id: string }>();

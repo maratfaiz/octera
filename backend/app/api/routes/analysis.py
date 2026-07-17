@@ -43,6 +43,7 @@ def list_analysis_history(
             # Matches generate_report's DME-screening logic (see report_generator.py)
             # so a study flagged in its detail report isn't shown as unremarkable here.
             top_diagnosis=resolve_flagged_diagnosis(r.diagnoses),
+            layer_thickness=r.layer_thickness,
         )
         for r in results
     ]

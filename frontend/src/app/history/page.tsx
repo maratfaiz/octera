@@ -7,7 +7,8 @@ import { ApiError, analysis, fetchImageObjectUrl, getToken, studies } from "@/li
 import type { AnalysisSummary, Study } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { TrendChart } from "@/components/TrendChart";
-import { ActivityIcon, AlertZoneIcon, GaugeIcon } from "@/components/icons";
+import { ActivityIcon, AlertZoneIcon, GaugeIcon, RulerIcon } from "@/components/icons";
+import { LAYER_LABELS_RU } from "@/lib/labels";
 
 const STATUS_LABELS: Record<Study["status"], string> = {
   uploaded: "Загружено",
@@ -78,6 +79,26 @@ export default function HistoryPage() {
     .filter((h) => h.top_diagnosis)
     .map((h) => ({ date: shortDate(h.created_at), value: h.top_diagnosis!.probability }));
 
+  // Each layer gets its own min/max-normalized 0..1 series -- raw thickness values
+  // live on very different absolute scales per layer (a few microns vs. over a
+  // hundred), so a shared scale would flatten the thinner layers' trends to
+  // invisible. A flat history (min === max, including a single data point) maps
+  // to a flat mid-line rather than dividing by zero.
+  const layerTrends = Object.keys(LAYER_LABELS_RU)
+    .map((layerKey) => {
+      const raw = history
+        .filter((h) => layerKey in h.layer_thickness)
+        .map((h) => ({ date: shortDate(h.created_at), value: h.layer_thickness[layerKey] }));
+      if (raw.length === 0) return null;
+      const values = raw.map((p) => p.value);
+      const min = Math.min(...values);
+      const max = Math.max(...values);
+      const range = max - min;
+      const points = raw.map((p) => ({ date: p.date, value: range > 0 ? (p.value - min) / range : 0.5 }));
+      return { layerKey, label: LAYER_LABELS_RU[layerKey], latest: values[values.length - 1], points };
+    })
+    .filter((t): t is NonNullable<typeof t> => t !== null);
+
   return (
     <div className="app-shell">
       <Sidebar />
@@ -126,6 +147,26 @@ export default function HistoryPage() {
                 </p>
                 <TrendChart points={confidencePoints} color="var(--success)" />
               </div>
+            </div>
+          )}
+
+          {!loading && history.length >= 2 && layerTrends.length > 0 && (
+            <div className="card">
+              <p className="card-title">
+                <span className="card-title-icon">
+                  <RulerIcon />
+                </span>
+                Динамика толщины слоёв сетчатки (мкм)
+              </p>
+              {layerTrends.map((t) => (
+                <div key={t.layerKey} className="bar-row">
+                  <div className="bar-row-labels">
+                    <span>{t.label}</span>
+                    <span>{t.latest}</span>
+                  </div>
+                  <TrendChart points={t.points} color="var(--accent)" height={32} showGrid={false} />
+                </div>
+              ))}
             </div>
           )}
 

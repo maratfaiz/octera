@@ -39,4 +39,5 @@ export interface AnalysisSummary {
   created_at: string;
   quality_score: number;
   top_diagnosis: Diagnosis | null;
+  layer_thickness: Record<string, number>;
 }

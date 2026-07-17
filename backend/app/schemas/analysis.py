@@ -30,5 +30,6 @@ class AnalysisSummary(BaseModel):
     created_at: datetime
     quality_score: float
     top_diagnosis: Diagnosis | None
+    layer_thickness: dict[str, float]
 
     model_config = {"from_attributes": True}
