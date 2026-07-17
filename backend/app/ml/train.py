@@ -36,6 +36,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
@@ -426,8 +427,9 @@ def select_best_model(
         if groups is not None
         else StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     )
+    candidates = _candidate_estimators()
     scores: dict[str, float] = {}
-    for name, estimator in _candidate_estimators().items():
+    for name, estimator in candidates.items():
         try:
             fold_scores = cross_val_score(estimator, X, y, groups=groups, cv=cv, scoring="balanced_accuracy")
         except ValueError as exc:
@@ -443,7 +445,10 @@ def select_best_model(
     if not scores:
         raise RuntimeError("No candidate estimator could be cross-validated on this dataset")
     best_name = max(scores, key=scores.get)
-    return best_name, _candidate_estimators()[best_name], scores
+    # clone() gives a fresh unfitted copy of the SAME estimator that was already
+    # built above -- cheaper and clearer than reconstructing all 5 candidate
+    # pipelines again just to keep 1.
+    return best_name, clone(candidates[best_name]), scores
 
 
 def main() -> None:
@@ -566,7 +571,7 @@ def main() -> None:
             raw_images,
             labels,
             split_groups,
-            lambda: _candidate_estimators()[best_name],
+            lambda: clone(best_estimator),
             rotation_augment=not args.no_rotation_augment,
         )
         print(
@@ -653,7 +658,7 @@ def main() -> None:
             print(f"Rotation-augmented full dataset for final refit: {len(raw_images)} -> {len(full_images)} images")
         else:
             X_full, y_full = X_all, y_all
-        model = OCTClassifier(_candidate_estimators()[best_name])
+        model = OCTClassifier(clone(best_estimator))
         model.fit(X_full, y_full)
         shipped_on_full_dataset = True
 
