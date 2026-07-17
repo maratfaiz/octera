@@ -97,6 +97,18 @@ def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
             PCA(n_components=30, random_state=random_state),
             SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
         ),
+        # Round 27: round 23's rotation augmentation grew the actual training set
+        # ~5x past round 11's original ~700-900 images, so 30 components (tuned on
+        # the smaller pre-augmentation set) is no longer necessarily optimal --
+        # confirmed on the real dataset, PCA(75) beats PCA(30) on the augmented
+        # data in 4/5 split seeds. Added as a candidate rather than replacing
+        # PCA(30) outright, so cross-validation keeps picking whichever actually
+        # wins for a given training run instead of hardcoding the choice.
+        "svm_rbf_pca75": make_pipeline(
+            StandardScaler(),
+            PCA(n_components=75, random_state=random_state),
+            SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
+        ),
     }
 
 
@@ -512,42 +524,54 @@ def main() -> None:
         )
         groups_train = np.array(groups_train_list) if groups_train_list is not None else None
         print(f"Oversampled minority classes in training split: {dict(before)} -> {dict(Counter(labels_train))}")
+    n_train_after_oversampling = len(images_train)
 
-    X_train = np.stack([extract_features(Image.fromarray(img)) for img in images_train])
+    # Unaugmented features -- always needed for X_all (the round-16 "ship on 100%
+    # of data" refit when rotation augmentation is disabled below), regardless of
+    # what candidate selection and the final single-split fit end up using.
+    X_train_raw = np.stack([extract_features(Image.fromarray(img)) for img in images_train])
     X_test = np.stack([extract_features(Image.fromarray(img)) for img in images_test])
-    y_train = np.array(labels_train)
+    y_train_raw = np.array(labels_train)
     y_test = np.array(labels_test)
+
+    # Round 23: rotation-augmented training (see _rotation_augment). Originally
+    # applied only after candidate selection, matching every prior round's
+    # methodology -- but round 27 found that selecting a model/hyperparameter on
+    # data different from what's actually fit afterward can pick a measurably
+    # worse choice (PCA(30), tuned in round 11 pre-augmentation, loses to
+    # PCA(75) once evaluated on the augmented data it's really trained on).
+    # Augmentation now happens before selection, so both selection and the
+    # final fit see the exact same data.
+    rotation_augmented = data_source != "synthetic" and not args.no_rotation_augment
+    if rotation_augmented:
+        groups_train_list = list(groups_train) if groups_train is not None else None
+        images_train, labels_train, groups_train_list = _rotation_augment(
+            images_train, labels_train, groups_train_list
+        )
+        groups_train = np.array(groups_train_list) if groups_train_list is not None else None
+        print(
+            f"Rotation-augmented training split (round 23): "
+            f"{n_train_after_oversampling} -> {len(images_train)} images"
+        )
+        # _rotation_augment always keeps the original images unchanged as a prefix
+        # before appending rotated copies, so X_train_raw already covers
+        # images_train[:n_train_after_oversampling] -- only the newly-appended
+        # rotated copies need feature extraction, not the whole set.
+        X_new = np.stack(
+            [extract_features(Image.fromarray(img)) for img in images_train[n_train_after_oversampling:]]
+        )
+        X_train = np.concatenate([X_train_raw, X_new])
+        y_train = np.array(labels_train)
+    else:
+        X_train, y_train = X_train_raw, y_train_raw
+    n_train_after_rotation_augment = len(images_train)
 
     print("Selecting best model via cross-validation on the training split:")
     best_name, best_estimator, cv_scores = select_best_model(X_train, y_train, groups=groups_train)
     print(f"Selected: {best_name} (cv balanced accuracy = {cv_scores[best_name]:.3f})")
 
-    # Round 23: rotation-augmented training (see _rotation_augment). Candidate selection
-    # above still runs on the un-augmented split, matching every prior round's
-    # methodology -- only the model that's actually fit/shipped/thresholded changes.
-    rotation_augmented = data_source != "synthetic" and not args.no_rotation_augment
-    fit_images_train, fit_labels_train, fit_groups_train = images_train, labels_train, groups_train
-    if rotation_augmented:
-        groups_train_list = list(groups_train) if groups_train is not None else None
-        fit_images_train, fit_labels_train, fit_groups_list = _rotation_augment(
-            images_train, labels_train, groups_train_list
-        )
-        fit_groups_train = np.array(fit_groups_list) if fit_groups_list is not None else None
-        print(f"Rotation-augmented training split (round 23): {len(images_train)} -> {len(fit_images_train)} images")
-
-    if rotation_augmented:
-        # _rotation_augment always keeps the original images unchanged as a prefix
-        # (see its docstring/implementation) before appending rotated copies, so
-        # X_train already covers fit_images_train[:len(images_train)] -- only the
-        # newly-appended rotated copies need feature extraction, not the whole set.
-        X_new = np.stack([extract_features(Image.fromarray(img)) for img in fit_images_train[len(images_train) :]])
-        X_train_fit = np.concatenate([X_train, X_new])
-        y_train_fit = np.array(fit_labels_train)
-    else:
-        X_train_fit, y_train_fit = X_train, y_train
-
     model = OCTClassifier(best_estimator)
-    model.fit(X_train_fit, y_train_fit)
+    model.fit(X_train, y_train)
 
     preds = model.clf.predict(X_test)
     test_accuracy = accuracy_score(y_test, preds)
@@ -558,8 +582,8 @@ def main() -> None:
     X_all: np.ndarray | None = None
     y_all: np.ndarray | None = None
     if data_source != "synthetic" and args.minority_oversample == 1:
-        X_all = np.empty((len(raw_images), X_train.shape[1]), dtype=X_train.dtype)
-        X_all[train_idx] = X_train[: len(train_idx)]
+        X_all = np.empty((len(raw_images), X_train_raw.shape[1]), dtype=X_train_raw.dtype)
+        X_all[train_idx] = X_train_raw
         X_all[test_idx] = X_test
         y_all = np.array(labels)
 
@@ -571,7 +595,7 @@ def main() -> None:
             labels,
             split_groups,
             lambda: clone(best_estimator),
-            rotation_augment=not args.no_rotation_augment,
+            rotation_augment=rotation_augmented,
         )
         print(
             f"  test accuracy: {multi_seed_metrics['test_accuracy']['mean']:.3f} "
@@ -608,7 +632,7 @@ def main() -> None:
 
         print("Selecting DME decision thresholds via out-of-fold CV on the training split (not the test set):")
         threshold_analysis = _cv_threshold_analysis(
-            X_train_fit, y_train_fit, y_test, test_dme_proba, best_estimator, groups_train=fit_groups_train
+            X_train, y_train, y_test, test_dme_proba, best_estimator, groups_train=groups_train
         )
         best = threshold_analysis["best_f1_operating_point"]
         print(
@@ -644,7 +668,7 @@ def main() -> None:
         # a measurement of this exact final artifact.
         print("Retraining final checkpoint on 100% of the data (round 16) for shipping:")
         if rotation_augmented:
-            # Same reuse as the earlier fit_images_train step: _rotation_augment keeps
+            # Same reuse as the earlier augmentation step: _rotation_augment keeps
             # raw_images unchanged as a prefix, and X_all already has its features
             # (assembled above in the same order) -- only the new rotated tail needs
             # extracting.
@@ -668,10 +692,10 @@ def main() -> None:
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "data_source": data_source,
         "n_samples": len(raw_images),
-        "n_train_samples_after_oversampling": len(images_train),
+        "n_train_samples_after_oversampling": n_train_after_oversampling,
         "minority_oversample_factor": args.minority_oversample,
-        "rotation_augment_enabled": data_source != "synthetic" and not args.no_rotation_augment,
-        "n_train_samples_after_rotation_augment": len(fit_images_train),
+        "rotation_augment_enabled": rotation_augmented,
+        "n_train_samples_after_rotation_augment": n_train_after_rotation_augment,
         "classes": CLASSES,
         "selected_model": best_name,
         "cv_balanced_accuracy_by_model": cv_scores,

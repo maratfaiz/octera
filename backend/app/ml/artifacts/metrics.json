@@ -1,59 +1,60 @@
 {
-  "trained_at": "2026-07-17T01:12:01.958700+00:00",
+  "trained_at": "2026-07-17T11:01:04.552962+00:00",
   "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
   "n_samples": 1113,
-  "n_train_samples_after_oversampling": 888,
+  "n_train_samples_after_oversampling": 878,
   "minority_oversample_factor": 1,
   "rotation_augment_enabled": true,
-  "n_train_samples_after_rotation_augment": 4440,
+  "n_train_samples_after_rotation_augment": 4390,
   "classes": [
     "NORMAL",
     "DME"
   ],
-  "selected_model": "svm_rbf_pca30",
+  "selected_model": "svm_rbf_pca75",
   "cv_balanced_accuracy_by_model": {
-    "mlp_128_64": 0.823220438650311,
-    "mlp_64": 0.8117149872235974,
-    "random_forest": 0.6050408090586662,
-    "svm_rbf": 0.8099961580678372,
-    "svm_rbf_pca30": 0.8969047845270601
+    "mlp_128_64": 0.8257632528406641,
+    "mlp_64": 0.8173394900662435,
+    "random_forest": 0.6355356583819582,
+    "svm_rbf": 0.822420360376799,
+    "svm_rbf_pca30": 0.8569115731242412,
+    "svm_rbf_pca75": 0.8673090124932109
   },
-  "test_accuracy": 0.9155555555555556,
+  "test_accuracy": 0.9361702127659575,
   "classification_report": {
     "DME": {
-      "precision": 0.59375,
-      "recall": 0.76,
-      "f1-score": 0.6666666666666666,
-      "support": 25.0
+      "precision": 0.7708333333333334,
+      "recall": 0.9024390243902439,
+      "f1-score": 0.8314606741573034,
+      "support": 41.0
     },
     "NORMAL": {
-      "precision": 0.9689119170984456,
-      "recall": 0.935,
-      "f1-score": 0.9516539440203562,
-      "support": 200.0
+      "precision": 0.9786096256684492,
+      "recall": 0.9432989690721649,
+      "f1-score": 0.9606299212598425,
+      "support": 194.0
     },
-    "accuracy": 0.9155555555555556,
+    "accuracy": 0.9361702127659575,
     "macro avg": {
-      "precision": 0.7813309585492227,
-      "recall": 0.8475,
-      "f1-score": 0.8091603053435115,
-      "support": 225.0
+      "precision": 0.8747214795008913,
+      "recall": 0.9228689967312045,
+      "f1-score": 0.8960452977085729,
+      "support": 235.0
     },
     "weighted avg": {
-      "precision": 0.9272272596430627,
-      "recall": 0.9155555555555556,
-      "f1-score": 0.9199886909810573,
-      "support": 225.0
+      "precision": 0.9423592938142374,
+      "recall": 0.9361702127659575,
+      "f1-score": 0.9380940100632293,
+      "support": 235.0
     }
   },
   "confusion_matrix": [
     [
-      187,
-      13
+      183,
+      11
     ],
     [
-      6,
-      19
+      4,
+      37
     ]
   ],
   "trained_on_real_patient_data": true,
@@ -61,89 +62,89 @@
     "selection_method": "thresholds chosen via 4-fold out-of-fold CV on the training split only; metrics below are the test set graded at those thresholds, not used to pick them",
     "default_threshold": 0.5,
     "best_f1_operating_point": {
-      "threshold": 0.4087280511485071,
+      "threshold": 0.4597176586609212,
       "classification_report": {
         "NORMAL": {
-          "precision": 0.9504950495049505,
-          "recall": 0.96,
-          "f1-score": 0.9552238805970149,
-          "support": 200.0
+          "precision": 0.9685863874345549,
+          "recall": 0.9536082474226805,
+          "f1-score": 0.961038961038961,
+          "support": 194.0
         },
         "DME": {
-          "precision": 0.6521739130434783,
-          "recall": 0.6,
-          "f1-score": 0.625,
-          "support": 25.0
+          "precision": 0.7954545454545454,
+          "recall": 0.8536585365853658,
+          "f1-score": 0.8235294117647058,
+          "support": 41.0
         },
-        "accuracy": 0.92,
+        "accuracy": 0.9361702127659575,
         "macro avg": {
-          "precision": 0.8013344812742144,
-          "recall": 0.78,
-          "f1-score": 0.7901119402985075,
-          "support": 225.0
+          "precision": 0.8820204664445501,
+          "recall": 0.9036333920040232,
+          "f1-score": 0.8922841864018334,
+          "support": 235.0
         },
         "weighted avg": {
-          "precision": 0.9173482565647869,
-          "recall": 0.92,
-          "f1-score": 0.9185323383084576,
-          "support": 225.0
+          "precision": 0.9383804064933617,
+          "recall": 0.9361702127659575,
+          "f1-score": 0.93704793329324,
+          "support": 235.0
         }
       },
       "confusion_matrix": [
         [
-          192,
-          8
+          185,
+          9
         ],
         [
-          10,
-          15
+          6,
+          35
         ]
       ]
     },
     "high_recall_operating_point": {
-      "threshold": 0.2803437858795981,
+      "threshold": 0.12289555172068949,
       "classification_report": {
         "NORMAL": {
-          "precision": 0.9641025641025641,
-          "recall": 0.94,
-          "f1-score": 0.9518987341772152,
-          "support": 200.0
+          "precision": 0.9835164835164835,
+          "recall": 0.9226804123711341,
+          "f1-score": 0.9521276595744681,
+          "support": 194.0
         },
         "DME": {
-          "precision": 0.6,
-          "recall": 0.72,
-          "f1-score": 0.6545454545454545,
-          "support": 25.0
+          "precision": 0.7169811320754716,
+          "recall": 0.926829268292683,
+          "f1-score": 0.8085106382978723,
+          "support": 41.0
         },
-        "accuracy": 0.9155555555555556,
+        "accuracy": 0.9234042553191489,
         "macro avg": {
-          "precision": 0.782051282051282,
-          "recall": 0.83,
-          "f1-score": 0.8032220943613348,
-          "support": 225.0
+          "precision": 0.8502488077959776,
+          "recall": 0.9247548403319086,
+          "f1-score": 0.8803191489361701,
+          "support": 235.0
         },
         "weighted avg": {
-          "precision": 0.9236467236467236,
-          "recall": 0.9155555555555556,
-          "f1-score": 0.9188594808847973,
-          "support": 225.0
+          "precision": 0.9370145711374133,
+          "recall": 0.9234042553191489,
+          "f1-score": 0.9270710728836576,
+          "support": 235.0
         }
       },
       "confusion_matrix": [
         [
-          188,
-          12
+          179,
+          15
         ],
         [
-          7,
-          18
+          3,
+          38
         ]
       ]
     }
   },
   "dme_calibration_metrics": {
-    "brier_score": 0.0547307237870378,
-    "log_loss": 0.19343914791584044,
+    "brier_score": 0.04518817538202165,
+    "log_loss": 0.1594720749503041,
     "note": "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific operating point -- not shipped, see README round 8."
   },
   "multi_seed_evaluation": {
@@ -156,36 +157,36 @@
     ],
     "rotation_augment": true,
     "test_accuracy": {
-      "mean": 0.9274072419111148,
-      "std": 0.008870321416695165,
+      "mean": 0.9419168785068324,
+      "std": 0.0130280536945313,
       "values": [
-        0.9155555555555556,
-        0.9295154185022027,
-        0.9203539823008849,
-        0.9304347826086956,
-        0.9411764705882353
+        0.9361702127659575,
+        0.9327354260089686,
+        0.9348837209302325,
+        0.967741935483871,
+        0.9380530973451328
       ]
     },
     "dme_precision": {
-      "mean": 0.7329602206736352,
-      "std": 0.08720559376711197,
+      "mean": 0.7939327485380117,
+      "std": 0.08331037438938867,
       "values": [
-        0.59375,
-        0.8292682926829268,
-        0.7619047619047619,
-        0.675,
-        0.8048780487804879
+        0.7708333333333334,
+        0.7777777777777778,
+        0.6666666666666666,
+        0.9210526315789473,
+        0.8333333333333334
       ]
     },
     "dme_recall": {
-      "mean": 0.8238237454100368,
-      "std": 0.05201945689378996,
+      "mean": 0.7924883533491855,
+      "std": 0.08852286829915762,
       "values": [
-        0.76,
-        0.7906976744186046,
-        0.8,
-        0.9,
-        0.868421052631579
+        0.9024390243902439,
+        0.7,
+        0.7272727272727273,
+        0.8974358974358975,
+        0.7352941176470589
       ]
     },
     "seeds_skipped_no_dme_in_test_fold": []
