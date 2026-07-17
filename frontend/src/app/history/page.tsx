@@ -84,20 +84,25 @@ export default function HistoryPage() {
   // hundred), so a shared scale would flatten the thinner layers' trends to
   // invisible. A flat history (min === max, including a single data point) maps
   // to a flat mid-line rather than dividing by zero.
-  const layerTrends = Object.keys(LAYER_LABELS_RU)
-    .map((layerKey) => {
-      const raw = history
-        .filter((h) => layerKey in h.layer_thickness)
-        .map((h) => ({ date: shortDate(h.created_at), value: h.layer_thickness[layerKey] }));
-      if (raw.length === 0) return null;
-      const values = raw.map((p) => p.value);
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const range = max - min;
-      const points = raw.map((p) => ({ date: p.date, value: range > 0 ? (p.value - min) / range : 0.5 }));
-      return { layerKey, label: LAYER_LABELS_RU[layerKey], latest: values[values.length - 1], points };
-    })
-    .filter((t): t is NonNullable<typeof t> => t !== null);
+  //
+  // A low-quality scan makes the pipeline skip segmentation entirely (empty
+  // layer_thickness, see run_analysis_pipeline) -- if that happens to be a
+  // patient's most recent study, "latest" must not silently fall back to an
+  // older study's value with no indication it isn't current.
+  const mostRecentStudy = history[history.length - 1];
+  const layerTrends = Object.keys(LAYER_LABELS_RU).flatMap((layerKey) => {
+    const raw = history
+      .filter((h) => layerKey in h.layer_thickness)
+      .map((h) => ({ date: shortDate(h.created_at), value: h.layer_thickness[layerKey] }));
+    if (raw.length === 0) return [];
+    const values = raw.map((p) => p.value);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min;
+    const points = raw.map((p) => ({ date: p.date, value: range > 0 ? (p.value - min) / range : 0.5 }));
+    const latest = mostRecentStudy && layerKey in mostRecentStudy.layer_thickness ? mostRecentStudy.layer_thickness[layerKey] : null;
+    return [{ layerKey, label: LAYER_LABELS_RU[layerKey], latest, points }];
+  });
 
   return (
     <div className="app-shell">
@@ -162,7 +167,7 @@ export default function HistoryPage() {
                 <div key={t.layerKey} className="bar-row">
                   <div className="bar-row-labels">
                     <span>{t.label}</span>
-                    <span>{t.latest}</span>
+                    <span>{t.latest !== null ? t.latest : "—"}</span>
                   </div>
                   <TrendChart points={t.points} color="var(--accent)" height={32} showGrid={false} />
                 </div>
