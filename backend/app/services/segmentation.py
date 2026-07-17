@@ -117,20 +117,25 @@ def _column_peaks(gray: np.ndarray, col: int, window: int, min_distance: int) ->
     return _find_peaks(profile, min_distance)
 
 
-def _seed_column(gray: np.ndarray, window: int, min_distance: int, needed: int) -> int | None:
+def _seed_column(
+    gray: np.ndarray, window: int, min_distance: int, needed: int, peaks_at
+) -> int | None:
     """Picks the column with the clearest banded signal to start tracking from.
 
     Sampled rather than exhaustive for speed on wide images -- a coarse scan is
-    enough to find a reasonably representative starting point.
+    enough to find a reasonably representative starting point. Uses `peaks_at`
+    (a per-column cache shared with the caller's later full-width tracking
+    pass) so a sampled column's peaks aren't recomputed once tracking reaches
+    that same column again.
     """
     height, width = gray.shape
     step = max(1, width // 60)
     best_col, best_score = None, -1.0
     for col in range(0, width, step):
-        profile = smooth(gray[:, col], window)
-        peaks = _find_peaks(profile, min_distance)
+        peaks = peaks_at(col)
         if len(peaks) < needed:
             continue
+        profile = smooth(gray[:, col], window)
         score = float(sum(profile[p] for p in peaks))
         if score > best_score:
             best_score, best_col = score, col
@@ -151,12 +156,23 @@ def _track_boundaries(gray: np.ndarray) -> np.ndarray:
     min_distance = max(2, height // 20)
     snap_tolerance = max(4, height // 8)
 
-    seed_col = _seed_column(gray, window, min_distance, needed)
+    # Cached across both the seed-column search and the full-width tracking
+    # pass below -- the sampled columns _seed_column scores are a subset of
+    # the columns _advance() will visit anyway, so this avoids recomputing
+    # the same column's peaks twice.
+    peaks_cache: dict[int, list[int]] = {}
+
+    def peaks_at(col: int) -> list[int]:
+        if col not in peaks_cache:
+            peaks_cache[col] = _column_peaks(gray, col, window, min_distance)
+        return peaks_cache[col]
+
+    seed_col = _seed_column(gray, window, min_distance, needed, peaks_at)
     if seed_col is None:
         flat = np.linspace(0, height - 1, needed)
         return np.tile(flat[:, None], (1, width))
 
-    seed_peaks = _column_peaks(gray, seed_col, window, min_distance)
+    seed_peaks = peaks_at(seed_col)
     seed_profile = smooth(gray[:, seed_col], window)
     top_by_prominence = np.argsort([seed_profile[p] for p in seed_peaks])[-needed:]
     seed_positions = sorted(np.array(seed_peaks)[top_by_prominence].tolist())
@@ -167,7 +183,7 @@ def _track_boundaries(gray: np.ndarray) -> np.ndarray:
     def _advance(order: range, prev_positions: list[float]) -> None:
         prev = list(prev_positions)
         for col in order:
-            peaks = _column_peaks(gray, col, window, min_distance)
+            peaks = peaks_at(col)
             new_positions = []
             for p in prev:
                 if peaks:

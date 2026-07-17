@@ -56,6 +56,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 
 from app.ml.augmentation import augment as augment_image
+from app.ml.augmentation import rotate as rotate_image
 from app.ml.features import extract_features
 from app.ml.model import CLASSES, DEFAULT_CHECKPOINT_PATH, OCTClassifier
 from app.ml.synthetic_dataset import generate_dataset
@@ -253,8 +254,7 @@ def _rotation_augment(
     out_groups = list(groups) if groups is not None else None
     for idx, (img, label) in enumerate(zip(images, labels)):
         for angle in angles:
-            rotated = np.array(Image.fromarray(img).rotate(angle, resample=Image.BILINEAR, fillcolor=0))
-            out_images.append(rotated)
+            out_images.append(rotate_image(img, angle))
             out_labels.append(label)
             if out_groups is not None:
                 out_groups.append(groups[idx])

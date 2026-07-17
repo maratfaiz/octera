@@ -1,9 +1,15 @@
 """Lightweight image augmentation shared by synthetic and real training data.
 
-Kept dependency-free (numpy only) so it works without torchvision/albumentations.
+Kept dependency-free of heavy vision libraries (torchvision/albumentations);
+`rotate` uses PIL, already a project dependency for image I/O elsewhere.
 """
 
 import numpy as np
+from PIL import Image
+
+
+def rotate(img: np.ndarray, degrees: float) -> np.ndarray:
+    return np.array(Image.fromarray(img).rotate(degrees, resample=Image.BILINEAR, fillcolor=0))
 
 
 def random_flip(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
