@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-16T21:59:13.145484+00:00",
+  "trained_at": "2026-07-17T01:12:01.958700+00:00",
   "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
   "n_samples": 1113,
   "n_train_samples_after_oversampling": 888,
@@ -12,7 +12,7 @@
   ],
   "selected_model": "svm_rbf_pca30",
   "cv_balanced_accuracy_by_model": {
-    "mlp_128_64": 0.8175444182421476,
+    "mlp_128_64": 0.823220438650311,
     "mlp_64": 0.8117149872235974,
     "random_forest": 0.6050408090586662,
     "svm_rbf": 0.8099961580678372,
@@ -61,7 +61,7 @@
     "selection_method": "thresholds chosen via 4-fold out-of-fold CV on the training split only; metrics below are the test set graded at those thresholds, not used to pick them",
     "default_threshold": 0.5,
     "best_f1_operating_point": {
-      "threshold": 0.4085649812042723,
+      "threshold": 0.4087280511485071,
       "classification_report": {
         "NORMAL": {
           "precision": 0.9504950495049505,
@@ -101,7 +101,7 @@
       ]
     },
     "high_recall_operating_point": {
-      "threshold": 0.2805880335432367,
+      "threshold": 0.2803437858795981,
       "classification_report": {
         "NORMAL": {
           "precision": 0.9641025641025641,
@@ -142,8 +142,8 @@
     }
   },
   "dme_calibration_metrics": {
-    "brier_score": 0.05473850224335317,
-    "log_loss": 0.19347791829146552,
+    "brier_score": 0.0547307237870378,
+    "log_loss": 0.19343914791584044,
     "note": "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific operating point -- not shipped, see README round 8."
   },
   "multi_seed_evaluation": {

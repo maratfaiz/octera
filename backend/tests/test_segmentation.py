@@ -1,7 +1,7 @@
 import numpy as np
 from PIL import Image
 
-from app.services.segmentation import LAYERS, _detect_pathology_zones, segment_layers
+from app.services.segmentation import LAYERS, _detect_pathology_zones, _draw_layer_overlay, segment_layers
 
 
 def test_segment_layers_flat_image_falls_back_to_even_spacing(tmp_path):
@@ -65,3 +65,20 @@ def test_detect_pathology_zones_ignores_a_uniform_band():
     _, count = _detect_pathology_zones(band, [0, height])
 
     assert count == 0
+
+
+def test_layer_overlay_legend_wraps_instead_of_running_off_narrow_images():
+    """A prior version of the legend used a fixed-width single row with hardcoded
+    per-character spacing: on any image narrower than ~450px (including this
+    module's own 200-300px test fixtures above), later labels -- up to and
+    including "RPE" -- were drawn entirely off the canvas and never visible.
+    """
+    height, width = 300, 200
+    gray = np.random.default_rng(0).random((height, width)).astype(np.float32)
+    boundaries = np.tile(np.linspace(0, height - 1, len(LAYERS) + 1)[:, None], (1, width))
+
+    overlay = _draw_layer_overlay(gray, boundaries)
+
+    # Legend needs more than one row at this width, so the canvas must be taller
+    # than just the image plus a single legend row.
+    assert overlay.shape[0] > height + 30

@@ -42,7 +42,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
 
-from app.ml.signal_utils import flatten_band, smooth, tissue_extent
+from app.ml.signal_utils import dark_mask_in_band, flatten_band, smooth, tissue_extent
 
 LAYERS = [
     "nfl_gcl",  # nerve fiber layer / ganglion cell layer
@@ -61,6 +61,19 @@ LAYER_LABELS_RU = {
     "opl_onl": "Наружный плексиформный / наружный ядерный слой (OPL/ONL)",
     "photoreceptor": "Слой фоторецепторов",
     "rpe": "Пигментный эпителий сетчатки (RPE)",
+}
+
+# Compact standard abbreviations for the on-image legend (_draw_layer_overlay) --
+# the full LAYER_LABELS_RU phrases are for text (report, thickness table), not a
+# space-constrained legend; these match the bare-abbreviation convention real
+# OCT device software uses directly on the scan (e.g. "NFL/GCL", not the raw
+# Python identifier "nfl_gcl").
+LAYER_SHORT_LABELS = {
+    "nfl_gcl": "NFL/GCL",
+    "ipl_inl": "IPL/INL",
+    "opl_onl": "OPL/ONL",
+    "photoreceptor": "PHOTORECEPTOR",
+    "rpe": "RPE",
 }
 
 # One overlay color per boundary line (needs len(LAYERS) + 1 of these).
@@ -190,12 +203,7 @@ def _detect_pathology_zones(gray: np.ndarray, boundaries) -> tuple[np.ndarray, i
     if not valid.any():
         return mask, 0
 
-    row_count = valid.sum(axis=1)
-    row_sum = np.where(valid, flat, 0.0).sum(axis=1)
-    row_mean = np.divide(row_sum, row_count, out=np.zeros_like(row_sum), where=row_count > 0)
-    row_baseline = smooth(row_mean, window=max(3, flat.shape[0] // 20))[:, None]
-
-    dark_mask = valid & (flat < (row_baseline - DARKNESS_OFFSET))
+    dark_mask = dark_mask_in_band(flat, valid, DARKNESS_OFFSET)
     labeled, num_features = ndimage.label(dark_mask)
     min_area = max(15, int(valid.sum()) // MIN_ZONE_AREA_DIVISOR)
     max_width = 0.4 * width  # real fluid/cyst pockets are localized blobs, not
@@ -245,26 +253,43 @@ def _draw_layer_overlay(gray: np.ndarray, boundaries: np.ndarray) -> np.ndarray:
 
     row_idx = np.arange(height)[:, None]
     alpha = 0.35
-    for i, layer in enumerate(LAYERS):
+    for i in range(len(LAYERS)):
         color = np.array(BOUNDARY_COLORS[i % len(BOUNDARY_COLORS)], dtype=np.float32)
         top = boundaries[i][None, :]
         bottom = boundaries[i + 1][None, :]
         band_mask = (row_idx >= top) & (row_idx < bottom)
         rgb[band_mask] = rgb[band_mask] * (1 - alpha) + color * alpha
 
-    legend_h = 26
+    # Lay out the legend first (on a throwaway draw context, just to measure
+    # real text widths via textlength) and wrap entries onto as many rows as
+    # the image's actual width needs -- a narrow upload (a tight crop, or this
+    # module's own 200-300px test fixtures) would otherwise have later labels
+    # (up to and including "RPE") drawn entirely off-canvas and never visible.
+    measurer = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    swatch_w, gap, margin = 14, 16, 6
+    entries = [(LAYER_SHORT_LABELS[layer], BOUNDARY_COLORS[i % len(BOUNDARY_COLORS)]) for i, layer in enumerate(LAYERS)]
+    rows: list[list[tuple[str, tuple[int, int, int], int]]] = [[]]
+    x = margin
+    for label, color in entries:
+        entry_w = swatch_w + int(measurer.textlength(label)) + gap
+        if x + entry_w > width and rows[-1]:
+            rows.append([])
+            x = margin
+        rows[-1].append((label, color, x))
+        x += entry_w
+    row_h = 20
+    legend_h = margin + len(rows) * row_h
+
     canvas = np.zeros((height + legend_h, width, 3), dtype=np.uint8)
     canvas[:height] = rgb.astype(np.uint8)
     img = Image.fromarray(canvas, mode="RGB")
     draw = ImageDraw.Draw(img)
 
-    x = 6
-    for i, layer in enumerate(LAYERS):
-        color = BOUNDARY_COLORS[i % len(BOUNDARY_COLORS)]
-        draw.rectangle([x, height + 8, x + 10, height + 18], fill=color)
-        label = layer.upper()
-        draw.text((x + 14, height + 6), label, fill=(255, 255, 255))
-        x += 14 + 8 * len(label) + 16
+    for row_i, row in enumerate(rows):
+        y = height + margin + row_i * row_h
+        for label, color, x in row:
+            draw.rectangle([x, y + 2, x + 10, y + 12], fill=color)
+            draw.text((x + swatch_w, y), label, fill=(255, 255, 255))
 
     return np.array(img)
 

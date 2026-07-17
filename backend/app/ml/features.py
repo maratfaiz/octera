@@ -23,7 +23,7 @@ from PIL import Image
 from scipy import ndimage
 from skimage.feature import hog
 
-from app.ml.signal_utils import flatten_band, smooth, tissue_extent
+from app.ml.signal_utils import dark_mask_in_band, flatten_band, smooth, tissue_extent
 
 HOG_SIZE = 64
 
@@ -49,11 +49,7 @@ def _domain_features(gray: np.ndarray) -> np.ndarray:
         dark_area_frac = 0.0
         dark_zone_count_norm = 0.0
     else:
-        row_count = valid.sum(axis=1)
-        row_sum = np.where(valid, flat, 0.0).sum(axis=1)
-        row_mean = np.divide(row_sum, row_count, out=np.zeros_like(row_sum), where=row_count > 0)
-        row_baseline = smooth(row_mean, window=max(3, flat.shape[0] // 20))[:, None]
-        dark_mask = valid & (flat < (row_baseline - _DARKNESS_OFFSET))
+        dark_mask = dark_mask_in_band(flat, valid, _DARKNESS_OFFSET)
         dark_area_frac = float(dark_mask.sum()) / float(valid.sum())
         _, num_zones = ndimage.label(dark_mask)
         dark_zone_count_norm = min(num_zones / 50.0, 1.0)

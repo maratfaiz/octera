@@ -521,8 +521,9 @@ def main() -> None:
     # Round 23: rotation-augmented training (see _rotation_augment). Candidate selection
     # above still runs on the un-augmented split, matching every prior round's
     # methodology -- only the model that's actually fit/shipped/thresholded changes.
+    rotation_augmented = data_source != "synthetic" and not args.no_rotation_augment
     fit_images_train, fit_labels_train, fit_groups_train = images_train, labels_train, groups_train
-    if data_source != "synthetic" and not args.no_rotation_augment:
+    if rotation_augmented:
         groups_train_list = list(groups_train) if groups_train is not None else None
         fit_images_train, fit_labels_train, fit_groups_list = _rotation_augment(
             images_train, labels_train, groups_train_list
@@ -530,11 +531,16 @@ def main() -> None:
         fit_groups_train = np.array(fit_groups_list) if fit_groups_list is not None else None
         print(f"Rotation-augmented training split (round 23): {len(images_train)} -> {len(fit_images_train)} images")
 
-    if fit_images_train is images_train:
-        X_train_fit, y_train_fit = X_train, y_train
-    else:
-        X_train_fit = np.stack([extract_features(Image.fromarray(img)) for img in fit_images_train])
+    if rotation_augmented:
+        # _rotation_augment always keeps the original images unchanged as a prefix
+        # (see its docstring/implementation) before appending rotated copies, so
+        # X_train already covers fit_images_train[:len(images_train)] -- only the
+        # newly-appended rotated copies need feature extraction, not the whole set.
+        X_new = np.stack([extract_features(Image.fromarray(img)) for img in fit_images_train[len(images_train) :]])
+        X_train_fit = np.concatenate([X_train, X_new])
         y_train_fit = np.array(fit_labels_train)
+    else:
+        X_train_fit, y_train_fit = X_train, y_train
 
     model = OCTClassifier(best_estimator)
     model.fit(X_train_fit, y_train_fit)
@@ -633,9 +639,16 @@ def main() -> None:
         # metrics in this model card describe the held-out-validated *approach*, not
         # a measurement of this exact final artifact.
         print("Retraining final checkpoint on 100% of the data (round 16) for shipping:")
-        if data_source != "synthetic" and not args.no_rotation_augment:
+        if rotation_augmented:
+            # Same reuse as the earlier fit_images_train step: _rotation_augment keeps
+            # raw_images unchanged as a prefix, and X_all already has its features
+            # (assembled above in the same order) -- only the new rotated tail needs
+            # extracting.
             full_images, full_labels, _ = _rotation_augment(raw_images, labels)
-            X_full = np.stack([extract_features(Image.fromarray(img)) for img in full_images])
+            X_new_full = np.stack(
+                [extract_features(Image.fromarray(img)) for img in full_images[len(raw_images) :]]
+            )
+            X_full = np.concatenate([X_all, X_new_full])
             y_full = np.array(full_labels)
             print(f"Rotation-augmented full dataset for final refit: {len(raw_images)} -> {len(full_images)} images")
         else:

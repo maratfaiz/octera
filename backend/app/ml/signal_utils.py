@@ -6,13 +6,31 @@ place instead of two independently-maintained copies. They used to be
 hand-duplicated (features.py's simpler, single-global-profile retinal band
 estimate vs. segmentation.py's per-column tissue extent), kept in sync only
 by a comment -- exactly the kind of drift risk this module removes.
+
+Caution when tuning: the two call sites have different needs -- the
+classifier wants a stable, reproducible numeric summary (any change here
+changes what the shipped checkpoint was trained on and requires a retrain,
+see app/ml/train.py), while the visualization side wants to look right on a
+given image. A change made purely to improve how the segmentation overlay
+looks (e.g. adjusting threshold_frac or the smoothing windows below) will
+silently also change the classifier's features -- retrain and re-validate
+(see README's ML rounds) rather than assuming a visualization tweak is free.
 """
 
 import numpy as np
 
 
 def smooth(profile: np.ndarray, window: int) -> np.ndarray:
-    window = max(3, window)
+    if len(profile) == 0:
+        return profile
+    # np.convolve(..., mode="same") returns an array of length max(len(profile),
+    # len(kernel)), NOT len(profile), whenever the kernel is longer than the
+    # profile -- silently breaking every caller's index alignment (and, for
+    # 2D callers that broadcast the result against an array shaped by
+    # len(profile), raising a shape-mismatch error outright). Clamping the
+    # window to at most len(profile) guarantees the output always matches the
+    # input length.
+    window = min(max(3, window), len(profile))
     kernel = np.ones(window) / window
     return np.convolve(profile, kernel, mode="same")
 
@@ -30,6 +48,7 @@ def tissue_extent(gray: np.ndarray, threshold_frac: float = 0.25) -> tuple[np.nd
     min_run = max(2, height // 50)
     top = np.zeros(width)
     bottom = np.full(width, float(height))
+    has_tissue = np.zeros(width, dtype=bool)
     for col in range(width):
         profile = smooth(gray[:, col], window)
         peak = profile.max()
@@ -44,8 +63,20 @@ def tissue_extent(gray: np.ndarray, threshold_frac: float = 0.25) -> tuple[np.nd
         if sustained.size:
             top[col] = float(sustained[0])
             bottom[col] = float(sustained[-1] + min_run)
+            has_tissue[col] = True
     smooth_window = max(3, width // 30)
-    return smooth(top, smooth_window), smooth(bottom, smooth_window)
+    top = smooth(top, smooth_window)
+    bottom = smooth(bottom, smooth_window)
+    # A column with no sustained bright run (background/vignetting at the image
+    # edge, not real tissue) never overwrote its (0, height) placeholder above --
+    # left as-is, flatten_band would read that as "the entire column is valid
+    # tissue", pulling background noise into the row-wise darkness baseline and
+    # producing false-positive pathology-zone flags right at the image edges
+    # (observed empirically on real uploaded photos with vignetted borders).
+    # Zero these out to an empty (invalid) band instead.
+    top = np.where(has_tissue, top, 0.0)
+    bottom = np.where(has_tissue, bottom, 0.0)
+    return top, bottom
 
 
 def flatten_band(gray: np.ndarray, top: np.ndarray, bottom: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -71,3 +102,20 @@ def flatten_band(gray: np.ndarray, top: np.ndarray, bottom: np.ndarray) -> tuple
         flat[: len(seg), col] = seg
         valid[: len(seg), col] = True
     return flat, valid
+
+
+def dark_mask_in_band(flat: np.ndarray, valid: np.ndarray, darkness_offset: float) -> np.ndarray:
+    """Boolean mask of pixels in a flattened tissue band (see flatten_band) that
+    are notably darker (hyporeflective) than the row-wise brightness baseline
+    at that depth. Shared by segmentation.py's pathology-zone detector and
+    features.py's classifier domain features -- both need the same "is this
+    pixel darker than its local surroundings" answer and used to carry two
+    independently-maintained copies of this exact formula.
+    """
+    if not valid.any():
+        return np.zeros_like(valid, dtype=bool)
+    row_count = valid.sum(axis=1)
+    row_sum = np.where(valid, flat, 0.0).sum(axis=1)
+    row_mean = np.divide(row_sum, row_count, out=np.zeros_like(row_sum), where=row_count > 0)
+    row_baseline = smooth(row_mean, window=max(3, flat.shape[0] // 20))[:, None]
+    return valid & (flat < (row_baseline - darkness_offset))
