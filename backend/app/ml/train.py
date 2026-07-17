@@ -494,6 +494,7 @@ def _multi_seed_evaluation(
     return {
         "seeds": list(seeds),
         "rotation_augment": rotation_augment,
+        "flip_augment": flip_augment,
         "test_accuracy": _summary(accuracies),
         "dme_precision": _summary(dme_precisions),
         "dme_recall": _summary(dme_recalls),
