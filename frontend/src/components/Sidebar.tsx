@@ -6,10 +6,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { auth, clearToken } from "@/lib/api";
 import type { User } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
+import { ClockIcon, LogOutIcon, LogoIcon, PlusCircleIcon } from "@/components/icons";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Новый ОКТ", icon: "+" },
-  { href: "/history", label: "История", icon: "⏱" },
+  { href: "/dashboard", label: "Новый ОКТ", icon: PlusCircleIcon },
+  { href: "/history", label: "История", icon: ClockIcon },
 ];
 
 export function Sidebar() {
@@ -31,20 +32,28 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <Link href="/dashboard" className="sidebar-logo">
+        <span className="sidebar-logo-mark">
+          <LogoIcon />
+        </span>
         OCTera
       </Link>
 
       <nav className="sidebar-nav">
-        {NAV_ITEMS.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={`sidebar-link ${pathname === item.href ? "active" : ""}`}
-          >
-            <span className="sidebar-link-icon">{item.icon}</span>
-            {item.label}
-          </Link>
-        ))}
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`sidebar-link ${pathname === item.href ? "active" : ""}`}
+            >
+              <span className="sidebar-link-icon">
+                <Icon />
+              </span>
+              {item.label}
+            </Link>
+          );
+        })}
       </nav>
 
       <div className="sidebar-footer">
@@ -53,6 +62,7 @@ export function Sidebar() {
           <div>
             <div>{user?.full_name ?? "…"}</div>
             <button className="sidebar-logout" onClick={handleLogout}>
+              <LogOutIcon />
               Выйти
             </button>
           </div>

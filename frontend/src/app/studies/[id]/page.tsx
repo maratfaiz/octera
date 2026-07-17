@@ -6,6 +6,16 @@ import Link from "next/link";
 import { ApiError, analysis, fetchImageObjectUrl, getToken, studies } from "@/lib/api";
 import type { AnalysisResult, Study } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
+import {
+  ActivityIcon,
+  AlertZoneIcon,
+  ArrowLeftIcon,
+  GaugeIcon,
+  ImageIcon,
+  LayersMapIcon,
+  ReportIcon,
+  RulerIcon,
+} from "@/components/icons";
 
 // Keep in sync with backend/app/services/segmentation.py's LAYER_LABELS_RU --
 // the raw codes are an internal shorthand, not something to show a doctor.
@@ -65,9 +75,16 @@ export default function StudyPage() {
       <Sidebar />
       <div className="main-content">
         <div className="container">
-          <Link href="/history">← История</Link>
-          <h2>Результаты исследования</h2>
-          {error && <div className="error">{error}</div>}
+          <Link href="/history" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <ArrowLeftIcon /> История
+          </Link>
+          <h2 className="page-heading">Результаты исследования</h2>
+          {error && (
+            <div className="error">
+              <AlertZoneIcon />
+              {error}
+            </div>
+          )}
 
           {loading && (
             <div className="card loading-row">
@@ -79,7 +96,12 @@ export default function StudyPage() {
             <div>
               <div className="image-panels">
                 <div className="card">
-                  <p className="card-title">Исходное изображение</p>
+                  <p className="card-title">
+                    <span className="card-title-icon">
+                      <ImageIcon />
+                    </span>
+                    Исходное изображение
+                  </p>
                   {imageUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={imageUrl} alt="ОКТ-снимок" style={{ width: "100%", borderRadius: 8 }} />
@@ -88,7 +110,12 @@ export default function StudyPage() {
                   )}
                 </div>
                 <div className="card">
-                  <p className="card-title">Карта внимания AI</p>
+                  <p className="card-title">
+                    <span className="card-title-icon">
+                      <LayersMapIcon />
+                    </span>
+                    Карта внимания AI
+                  </p>
                   {segmentationUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={segmentationUrl} alt="Карта сегментации" style={{ width: "100%", borderRadius: 8 }} />
@@ -99,7 +126,12 @@ export default function StudyPage() {
                   )}
                 </div>
                 <div className="card">
-                  <p className="card-title">Карта патологий</p>
+                  <p className="card-title">
+                    <span className="card-title-icon">
+                      <AlertZoneIcon />
+                    </span>
+                    Карта патологий
+                  </p>
                   {pathologyUrl ? (
                     <>
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -121,7 +153,12 @@ export default function StudyPage() {
               {result && (
                 <>
                   <div className="card">
-                    <p className="card-title">Толщина слоев сетчатки (мкм)</p>
+                    <p className="card-title">
+                      <span className="card-title-icon">
+                        <RulerIcon />
+                      </span>
+                      Толщина слоев сетчатки (мкм)
+                    </p>
                     {Object.entries(result.layer_thickness).map(([layer, value]) => (
                       <div key={layer} className="list-item">
                         <span>{LAYER_LABELS_RU[layer] ?? layer}</span>
@@ -131,7 +168,12 @@ export default function StudyPage() {
                   </div>
 
                   <div className="card">
-                    <p className="card-title">AI-заключение</p>
+                    <p className="card-title">
+                      <span className="card-title-icon">
+                        <ReportIcon />
+                      </span>
+                      AI-заключение
+                    </p>
                     <p className="report-text">{result.report_text}</p>
                   </div>
                 </>
@@ -149,7 +191,12 @@ export default function StudyPage() {
             <div>
               {result && (
                 <div className="card">
-                  <p className="card-title">Качество изображения</p>
+                  <p className="card-title">
+                    <span className="card-title-icon">
+                      <GaugeIcon />
+                    </span>
+                    Качество изображения
+                  </p>
                   <p style={{ fontSize: 28, fontWeight: 700, margin: "0 0 4px" }}>
                     {(result.quality_score * 100).toFixed(0)}%
                   </p>
@@ -163,7 +210,12 @@ export default function StudyPage() {
 
               {result && (
                 <div className="card">
-                  <p className="card-title">Вероятность заболеваний</p>
+                  <p className="card-title">
+                    <span className="card-title-icon">
+                      <ActivityIcon />
+                    </span>
+                    Вероятность заболеваний
+                  </p>
                   {result.diagnoses.map((d) => (
                     <div key={d.code} style={{ marginBottom: 12 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>

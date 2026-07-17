@@ -7,12 +7,28 @@ import { ApiError, analysis, getToken, studies } from "@/lib/api";
 import type { AnalysisSummary, Study } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { TrendChart } from "@/components/TrendChart";
+import {
+  AlertZoneIcon,
+  CheckCircleIcon,
+  ClockIcon,
+  FolderClockIcon,
+  GaugeIcon,
+  LoaderIcon,
+  XCircleIcon,
+} from "@/components/icons";
 
 const STATUS_LABELS: Record<Study["status"], string> = {
   uploaded: "Загружено",
   processing: "Анализ…",
   completed: "Готово",
   failed: "Ошибка",
+};
+
+const STATUS_ICONS: Record<Study["status"], typeof ClockIcon> = {
+  uploaded: ClockIcon,
+  processing: LoaderIcon,
+  completed: CheckCircleIcon,
+  failed: XCircleIcon,
 };
 
 function shortDate(iso: string): string {
@@ -50,20 +66,35 @@ export default function HistoryPage() {
       <Sidebar />
       <div className="main-content">
         <div className="container">
-          <h1>История</h1>
-          {error && <div className="error">{error}</div>}
+          <h1 className="page-heading">История</h1>
+          {error && (
+            <div className="error">
+              <AlertZoneIcon />
+              {error}
+            </div>
+          )}
 
           {!loading && history.length >= 2 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div className="card">
-                <p className="card-title">Динамика: качество снимков</p>
+                <p className="card-title">
+                  <span className="card-title-icon">
+                    <GaugeIcon />
+                  </span>
+                  Динамика: качество снимков
+                </p>
                 <p style={{ fontSize: 22, fontWeight: 700, margin: "0 0 8px" }}>
                   {(qualityPoints[qualityPoints.length - 1].value * 100).toFixed(0)}%
                 </p>
                 <TrendChart points={qualityPoints} color="var(--accent)" />
               </div>
               <div className="card">
-                <p className="card-title">Динамика: уверенность диагностики</p>
+                <p className="card-title">
+                  <span className="card-title-icon">
+                    <AlertZoneIcon />
+                  </span>
+                  Динамика: уверенность диагностики
+                </p>
                 <p style={{ fontSize: 22, fontWeight: 700, margin: "0 0 8px" }}>
                   {confidencePoints.length > 0
                     ? `${(confidencePoints[confidencePoints.length - 1].value * 100).toFixed(0)}%`
@@ -75,6 +106,12 @@ export default function HistoryPage() {
           )}
 
           <div className="card">
+            <p className="card-title">
+              <span className="card-title-icon">
+                <FolderClockIcon />
+              </span>
+              Исследования
+            </p>
             {loading && (
               <div className="loading-row">
                 <span className="spinner" /> Загрузка…
@@ -85,17 +122,23 @@ export default function HistoryPage() {
                 Исследований пока нет — загрузите первый снимок на странице «Новый ОКТ».
               </p>
             )}
-            {items.map((s) => (
-              <div key={s.id} className="list-item">
-                <div>
+            {items.map((s) => {
+              const StatusIcon = STATUS_ICONS[s.status];
+              return (
+                <div key={s.id} className="list-item">
                   <div>
-                    {s.eye ?? "—"} · {new Date(s.created_at).toLocaleString("ru-RU")}
+                    <div>
+                      {s.eye ?? "—"} · {new Date(s.created_at).toLocaleString("ru-RU")}
+                    </div>
+                    <span className={`badge ${s.status}`}>
+                      <StatusIcon />
+                      {STATUS_LABELS[s.status]}
+                    </span>
                   </div>
-                  <span className={`badge ${s.status}`}>{STATUS_LABELS[s.status]}</span>
+                  <Link href={`/studies/${s.id}`}>Открыть →</Link>
                 </div>
-                <Link href={`/studies/${s.id}`}>Открыть →</Link>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

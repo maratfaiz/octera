@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, MAX_UPLOAD_SIZE_MB, analysis, getToken, studies, validateUploadFile } from "@/lib/api";
 import { Sidebar } from "@/components/Sidebar";
+import { AlertZoneIcon, SparkleIcon, UploadIcon } from "@/components/icons";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -54,13 +55,17 @@ export default function DashboardPage() {
       <Sidebar />
       <div className="main-content">
         <div className="container">
-          <h1 style={{ marginBottom: 4 }}>Добро пожаловать в OCTera</h1>
+          <h1 className="page-heading">
+            Добро пожаловать в <span className="gradient-text">OCTera</span>
+          </h1>
           <p style={{ color: "var(--text-muted)", marginTop: 0 }}>
             Загрузите ОКТ-снимок для анализа с помощью искусственного интеллекта
           </p>
 
           <form onSubmit={handleUpload} className="upload-card">
-            <div className="upload-plus">+</div>
+            <div className="upload-plus">
+              <UploadIcon />
+            </div>
             <h2 style={{ margin: "0 0 4px" }}>Новый ОКТ-снимок</h2>
             <p style={{ color: "var(--text-muted)", marginTop: 0 }}>
               Выберите файл для загрузки. Поддерживаются JPEG, PNG, TIFF. Максимальный размер: {MAX_UPLOAD_SIZE_MB}{" "}
@@ -75,16 +80,37 @@ export default function DashboardPage() {
               </select>
             </div>
             <div className="form-row">
-              <input type="file" accept="image/jpeg,image/png,image/tiff" onChange={handleFileChange} required />
+              <div className="file-input-trigger">
+                <label htmlFor="oct-file-upload">
+                  <UploadIcon />
+                  Выбрать файл
+                </label>
+                <input
+                  id="oct-file-upload"
+                  type="file"
+                  accept="image/jpeg,image/png,image/tiff"
+                  onChange={handleFileChange}
+                  required
+                />
+                <span className="file-input-name">{file ? file.name : "Файл не выбран"}</span>
+              </div>
             </div>
-            {error && <div className="error">{error}</div>}
+            {error && (
+              <div className="error">
+                <AlertZoneIcon />
+                {error}
+              </div>
+            )}
             <button type="submit" disabled={uploading || !file}>
               {uploading ? (
                 <span className="loading-row">
                   <span className="spinner" /> Анализ…
                 </span>
               ) : (
-                "Загрузить и запустить анализ"
+                <>
+                  <SparkleIcon />
+                  Загрузить и запустить анализ
+                </>
               )}
             </button>
           </form>
