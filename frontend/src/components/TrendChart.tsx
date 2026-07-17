@@ -21,7 +21,7 @@ function y(value: number): number {
 
 export function TrendChart({ points, color = "var(--accent)" }: TrendChartProps) {
   if (points.length === 0) {
-    return <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Недостаточно данных для графика.</p>;
+    return <p style={{ color: "var(--ink-soft)", fontSize: 13 }}>Недостаточно данных для графика.</p>;
   }
 
   const gradientId = `trend-gradient-${color.replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -37,7 +37,7 @@ export function TrendChart({ points, color = "var(--accent)" }: TrendChartProps)
             x2={WIDTH - PADDING}
             y1={PADDING + f * (HEIGHT - PADDING * 2)}
             y2={PADDING + f * (HEIGHT - PADDING * 2)}
-            stroke="var(--border)"
+            stroke="var(--line)"
             strokeWidth={1}
           />
         ))}
@@ -69,7 +69,7 @@ export function TrendChart({ points, color = "var(--accent)" }: TrendChartProps)
           x2={WIDTH - PADDING}
           y1={PADDING + f * (HEIGHT - PADDING * 2)}
           y2={PADDING + f * (HEIGHT - PADDING * 2)}
-          stroke="var(--border)"
+          stroke="var(--line)"
           strokeWidth={1}
         />
       ))}

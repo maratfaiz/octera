@@ -36,6 +36,25 @@ export function LogoIcon(props: IconProps) {
   );
 }
 
+export function WaveLogoIcon(props: IconProps) {
+  return (
+    <svg viewBox="0 0 30 30" width="1.25em" height="1.25em" fill="none" {...props}>
+      <circle cx="15" cy="15" r="13" stroke="currentColor" strokeWidth={2} opacity={0.25} />
+      <path
+        d="M4 17 C 9 10, 12 22, 15 15 S 21 8, 26 13"
+        stroke="currentColor"
+        strokeWidth={2}
+        fill="none"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+export function PlusIcon(props: IconProps) {
+  return base(<path d="M12 5v14M5 12h14" />, props);
+}
+
 export function PlusCircleIcon(props: IconProps) {
   return base(
     <>

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, auth } from "@/lib/api";
-import { AlertZoneIcon, LockIcon, LogoIcon, MailIcon, UserIcon } from "@/components/icons";
+import { AlertZoneIcon, LockIcon, MailIcon, UserIcon, WaveLogoIcon } from "@/components/icons";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -36,11 +36,11 @@ export default function LoginPage() {
       <div className="auth-card">
         <div className="auth-logo">
           <span className="sidebar-logo-mark">
-            <LogoIcon />
+            <WaveLogoIcon />
           </span>
           <span className="gradient-text">OCTera</span>
         </div>
-        <p style={{ color: "var(--text-muted)", marginTop: 0, textAlign: "center" }}>
+        <p style={{ color: "var(--ink-soft)", marginTop: 0, textAlign: "center" }}>
           {mode === "login" ? "Вход в личный кабинет" : "Регистрация"}
         </p>
 

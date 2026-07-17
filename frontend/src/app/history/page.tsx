@@ -3,19 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ApiError, analysis, getToken, studies } from "@/lib/api";
+import { ApiError, analysis, fetchImageObjectUrl, getToken, studies } from "@/lib/api";
 import type { AnalysisSummary, Study } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { TrendChart } from "@/components/TrendChart";
-import {
-  AlertZoneIcon,
-  CheckCircleIcon,
-  ClockIcon,
-  FolderClockIcon,
-  GaugeIcon,
-  LoaderIcon,
-  XCircleIcon,
-} from "@/components/icons";
+import { AlertZoneIcon, FolderClockIcon, GaugeIcon } from "@/components/icons";
 
 const STATUS_LABELS: Record<Study["status"], string> = {
   uploaded: "Загружено",
@@ -24,15 +16,40 @@ const STATUS_LABELS: Record<Study["status"], string> = {
   failed: "Ошибка",
 };
 
-const STATUS_ICONS: Record<Study["status"], typeof ClockIcon> = {
-  uploaded: ClockIcon,
-  processing: LoaderIcon,
-  completed: CheckCircleIcon,
-  failed: XCircleIcon,
-};
-
 function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" });
+}
+
+function HistoryThumb({ studyId }: { studyId: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let objectUrl: string | null = null;
+    let cancelled = false;
+    fetchImageObjectUrl(`/api/v1/studies/${studyId}/image`)
+      .then((u) => {
+        if (cancelled) {
+          URL.revokeObjectURL(u);
+          return;
+        }
+        objectUrl = u;
+        setUrl(u);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [studyId]);
+
+  return (
+    <div className="history-thumb">
+      {url && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt="" />
+      )}
+    </div>
+  );
 }
 
 export default function HistoryPage() {
@@ -65,8 +82,9 @@ export default function HistoryPage() {
     <div className="app-shell">
       <Sidebar />
       <div className="main-content">
-        <div className="container">
-          <h1 className="page-heading">История</h1>
+        <div className="container" style={{ maxWidth: 1080 }}>
+          <h1 className="page-heading">История исследований</h1>
+          <p className="page-subtitle">Динамика по всем ОКТ-снимкам пациента.</p>
           {error && (
             <div className="error">
               <AlertZoneIcon />
@@ -75,67 +93,77 @@ export default function HistoryPage() {
           )}
 
           {!loading && history.length >= 2 && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              <div className="card">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
+              <div className="card" style={{ marginBottom: 0 }}>
                 <p className="card-title">
                   <span className="card-title-icon">
                     <GaugeIcon />
                   </span>
-                  Динамика: качество снимков
+                  Качество снимков
                 </p>
-                <p style={{ fontSize: 22, fontWeight: 700, margin: "0 0 8px" }}>
-                  {(qualityPoints[qualityPoints.length - 1].value * 100).toFixed(0)}%
+                <p className="mono" style={{ fontSize: 28, fontWeight: 800, margin: "4px 0 12px" }}>
+                  {(qualityPoints[qualityPoints.length - 1].value * 100).toFixed(0)}
+                  <span style={{ fontSize: 16, color: "var(--ink-soft)" }}>%</span>
                 </p>
                 <TrendChart points={qualityPoints} color="var(--accent)" />
               </div>
-              <div className="card">
+              <div className="card" style={{ marginBottom: 0 }}>
                 <p className="card-title">
                   <span className="card-title-icon">
                     <AlertZoneIcon />
                   </span>
-                  Динамика: уверенность диагностики
+                  Уверенность диагностики
                 </p>
-                <p style={{ fontSize: 22, fontWeight: 700, margin: "0 0 8px" }}>
+                <p className="mono" style={{ fontSize: 28, fontWeight: 800, margin: "4px 0 12px" }}>
                   {confidencePoints.length > 0
-                    ? `${(confidencePoints[confidencePoints.length - 1].value * 100).toFixed(0)}%`
+                    ? confidencePoints[confidencePoints.length - 1].value * 100 < 100
+                      ? (confidencePoints[confidencePoints.length - 1].value * 100).toFixed(1)
+                      : "100"
                     : "—"}
+                  {confidencePoints.length > 0 && <span style={{ fontSize: 16, color: "var(--ink-soft)" }}>%</span>}
                 </p>
                 <TrendChart points={confidencePoints} color="var(--success)" />
               </div>
             </div>
           )}
 
-          <div className="card">
-            <p className="card-title">
-              <span className="card-title-icon">
-                <FolderClockIcon />
-              </span>
-              Исследования
-            </p>
+          <div className="history-table">
+            <div className="history-table-head">
+              <div />
+              <div>Снимок</div>
+              <div>Дата / время</div>
+              <div>Качество</div>
+              <div>Статус</div>
+              <div />
+            </div>
             {loading && (
-              <div className="loading-row">
+              <div className="loading-row" style={{ padding: "16px 20px" }}>
                 <span className="spinner" /> Загрузка…
               </div>
             )}
             {!loading && items.length === 0 && (
-              <p style={{ color: "var(--text-muted)" }}>
+              <p style={{ color: "var(--ink-soft)", padding: "16px 20px" }}>
                 Исследований пока нет — загрузите первый снимок на странице «Новый ОКТ».
               </p>
             )}
             {items.map((s) => {
-              const StatusIcon = STATUS_ICONS[s.status];
+              const summary = history.find((h) => h.study_id === s.id);
               return (
-                <div key={s.id} className="list-item">
-                  <div>
-                    <div>
-                      {s.eye ?? "—"} · {new Date(s.created_at).toLocaleString("ru-RU")}
-                    </div>
-                    <span className={`badge ${s.status}`}>
-                      <StatusIcon />
-                      {STATUS_LABELS[s.status]}
-                    </span>
+                <div key={s.id} className="history-table-row">
+                  <HistoryThumb studyId={s.id} />
+                  <div style={{ fontSize: 13.5, fontWeight: 700 }}>{s.eye ?? "—"}</div>
+                  <div className="mono" style={{ fontSize: 13, color: "var(--ink-soft)" }}>
+                    {new Date(s.created_at).toLocaleString("ru-RU")}
                   </div>
-                  <Link href={`/studies/${s.id}`}>Открыть →</Link>
+                  <div className="mono" style={{ fontSize: 13, fontWeight: 600 }}>
+                    {summary ? `${(summary.quality_score * 100).toFixed(0)}%` : "—"}
+                  </div>
+                  <div>
+                    <span className={`badge ${s.status}`}>{STATUS_LABELS[s.status]}</span>
+                  </div>
+                  <Link href={`/studies/${s.id}`} className="history-open-link">
+                    Открыть →
+                  </Link>
                 </div>
               );
             })}

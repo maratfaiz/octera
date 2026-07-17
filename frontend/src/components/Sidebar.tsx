@@ -6,11 +6,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { auth, clearToken } from "@/lib/api";
 import type { User } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
-import { ClockIcon, LogOutIcon, LogoIcon, PlusCircleIcon } from "@/components/icons";
+import { ClockIcon, LogOutIcon, PlusIcon, WaveLogoIcon } from "@/components/icons";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Новый ОКТ", icon: PlusCircleIcon },
-  { href: "/history", label: "История", icon: ClockIcon },
+  { href: "/dashboard", label: "Новый ОКТ", icon: PlusIcon, isActive: (path: string) => path === "/dashboard" },
+  { href: "/history", label: "История", icon: ClockIcon, isActive: (path: string) => path === "/history" || path.startsWith("/studies") },
 ];
 
 export function Sidebar() {
@@ -33,9 +33,12 @@ export function Sidebar() {
     <aside className="sidebar">
       <Link href="/dashboard" className="sidebar-logo">
         <span className="sidebar-logo-mark">
-          <LogoIcon />
+          <WaveLogoIcon />
         </span>
-        OCTera
+        <span>
+          <div className="sidebar-logo-name">OCTera</div>
+          <div className="sidebar-logo-tag">Retina AI Platform</div>
+        </span>
       </Link>
 
       <nav className="sidebar-nav">
@@ -45,7 +48,7 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`sidebar-link ${pathname === item.href ? "active" : ""}`}
+              className={`sidebar-link ${item.isActive(pathname) ? "active" : ""}`}
             >
               <span className="sidebar-link-icon">
                 <Icon />
