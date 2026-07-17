@@ -52,6 +52,8 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 
 from app.ml.augmentation import augment as augment_image
 from app.ml.features import extract_features
@@ -107,31 +109,28 @@ def _merge_duplicate_groups(patient_ids: list[str], content_hashes: list[str]) -
     split (round 10) doesn't catch this: 2 of those 12 pairs still ended up split
     across train and test, since they nominally belong to different "patients" --
     letting the model see the literal same scan at train time and trivially get it
-    right at test time. Union-find over (patient_id, content_hash) pairs merges any
-    patient IDs that ever share a duplicate image into one group.
+    right at test time. Connected components over a (patient_id, content_hash)
+    co-occurrence graph merges any patient IDs that ever share a duplicate image
+    into one group -- the same union-find problem scipy already solves.
     """
-    parent: dict[str, str] = {}
-
-    def find(x: str) -> str:
-        parent.setdefault(x, x)
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a: str, b: str) -> None:
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
+    unique_ids = sorted(set(patient_ids))
+    index = {pid: i for i, pid in enumerate(unique_ids)}
 
     by_hash: dict[str, list[str]] = {}
     for pid, content_hash in zip(patient_ids, content_hashes):
         by_hash.setdefault(content_hash, []).append(pid)
-    for pids in by_hash.values():
-        for other in pids[1:]:
-            union(pids[0], other)
 
-    return [find(pid) for pid in patient_ids]
+    rows: list[int] = []
+    cols: list[int] = []
+    for pids in by_hash.values():
+        first = index[pids[0]]
+        for other in pids[1:]:
+            rows.append(first)
+            cols.append(index[other])
+
+    graph = csr_matrix((np.ones(len(rows)), (rows, cols)), shape=(len(unique_ids), len(unique_ids)))
+    _, component_labels = connected_components(csgraph=graph, directed=False)
+    return [str(component_labels[index[pid]]) for pid in patient_ids]
 
 
 def _load_real_dataset(data_dir: str) -> tuple[list[np.ndarray], list[str], list[str]]:
