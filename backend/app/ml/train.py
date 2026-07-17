@@ -273,6 +273,42 @@ def _rotation_augment(
     return out_images, out_labels, out_groups
 
 
+def _flip_augment(
+    images: list[np.ndarray],
+    labels: list[str],
+    groups: list[str] | None = None,
+) -> tuple[list[np.ndarray], list[str], list[str] | None]:
+    """Adds a horizontally-mirrored copy of every image.
+
+    Round 26 first tried this (mirroring doesn't touch the depth axis the
+    layer analysis relies on, so it's low-risk for OCT B-scans) against a
+    rotation-augmented baseline that predates round 27/28's fix -- model
+    selection now happens on whichever data is actually trained on, and
+    svm_rbf_pca75 is a real candidate rather than a hardcoded pca30. Round 26
+    measured only a modest, mixed effect and shipped nothing, flagging that
+    the question needed a proper multi-seed check against the *current*
+    recipe before deciding. Round 29 re-ran exactly that check (5 split
+    seeds, flip applied on top of rotation augmentation, selection on the
+    doubled data): DME recall improved in 5/5 seeds (mean 0.787->0.856),
+    accuracy improved in 4/5 (flat in the 5th), precision improved in 4/5
+    (one seed dipped 2.1 points) -- a strictly better result than round 23's
+    own rotation-augmentation trade-off, so this ships enabled by default
+    despite roughly doubling training set size (and time) again. Applied
+    after rotation augmentation (doubling that already-augmented set,
+    matching what round 26/29 measured), each mirrored copy keeps its
+    source's group for the same patient-leakage reason as
+    _oversample_minority/_rotation_augment above.
+    """
+    out_images, out_labels = list(images), list(labels)
+    out_groups = list(groups) if groups is not None else None
+    for idx, (img, label) in enumerate(zip(images, labels)):
+        out_images.append(np.fliplr(img))
+        out_labels.append(label)
+        if out_groups is not None:
+            out_groups.append(groups[idx])
+    return out_images, out_labels, out_groups
+
+
 def _select_thresholds(y_true: np.ndarray, dme_proba: np.ndarray, min_recall: float = 0.85) -> dict:
     """Picks candidate DME probability cutoffs from a precision-recall curve.
 
@@ -365,6 +401,7 @@ def _multi_seed_evaluation(
     estimator_factory,
     seeds: tuple[int, ...] = (42, 7, 99, 123, 2024),
     rotation_augment: bool = False,
+    flip_augment: bool = False,
 ) -> dict:
     """Refits the winning model type across several train/test split seeds and
     reports mean/std, instead of trusting the single split's numbers at face
@@ -379,10 +416,12 @@ def _multi_seed_evaluation(
     produces the shipped checkpoint -- round 23 originally left this
     characterization describing the pre-round-23 recipe even after the
     augmented recipe shipped, which would have made this field describe a
-    model no longer in production. Costs 5x the feature extraction of the
-    non-augmented path (each seed's augmented training images are re-extracted
-    from scratch, since the augmented set differs per seed), but this function
-    is already documented as a characterization exercise, not a hot path.
+    model no longer in production. `flip_augment` (round 29) does the same
+    for mirrored copies, applied on top of rotation augmentation. Costs 5x
+    the feature extraction of the non-augmented path (each seed's augmented
+    training images are re-extracted from scratch, since the augmented set
+    differs per seed), but this function is already documented as a
+    characterization exercise, not a hot path.
     """
     y_all = np.array(labels)
 
@@ -399,6 +438,8 @@ def _multi_seed_evaluation(
         train_labels = [labels[i] for i in train_idx]
         if rotation_augment:
             train_images, train_labels, _ = _rotation_augment(train_images, train_labels)
+        if flip_augment:
+            train_images, train_labels, _ = _flip_augment(train_images, train_labels)
 
         X_train_seed = np.stack([extract_features(Image.fromarray(img)) for img in train_images])
         y_train_seed = np.array(train_labels)
@@ -484,6 +525,15 @@ def main() -> None:
         "README round 19/23. Measured to improve both the unrotated baseline and rotation robustness, "
         "so it ships enabled by default; this flag reverts to the round 19-22 baseline behavior.",
     )
+    parser.add_argument(
+        "--no-flip-augment",
+        action="store_true",
+        help="Disable flip-augmented training (round 29, real data only): by default, each (possibly "
+        "rotation-augmented) real training image is supplemented with a horizontally-mirrored copy -- "
+        "see README round 26/29. Measured across 5 split seeds against the current shipped recipe: DME "
+        "recall improved in 5/5 seeds, accuracy in 4/5, precision in 4/5, so it ships enabled by default; "
+        "this flag reverts to the round 23-28 baseline behavior.",
+    )
     parser.add_argument("--out", type=str, default=str(DEFAULT_CHECKPOINT_PATH))
     args = parser.parse_args()
 
@@ -566,6 +616,26 @@ def main() -> None:
         X_train, y_train = X_train_raw, y_train_raw
     n_train_after_rotation_augment = len(images_train)
 
+    # Round 29: flip-augmented training (see _flip_augment), applied on top of
+    # whatever rotation augmentation produced above -- same before-selection
+    # placement and same reasoning as round 27/28 for rotation augmentation,
+    # so selection and the final fit again see identical data.
+    flip_augmented = data_source != "synthetic" and not args.no_flip_augment
+    if flip_augmented:
+        groups_train_list = list(groups_train) if groups_train is not None else None
+        images_train, labels_train, groups_train_list = _flip_augment(images_train, labels_train, groups_train_list)
+        groups_train = np.array(groups_train_list) if groups_train_list is not None else None
+        print(f"Flip-augmented training split (round 29): {n_train_after_rotation_augment} -> {len(images_train)} images")
+        # Same reuse pattern as rotation augmentation above: _flip_augment keeps
+        # the input unchanged as a prefix, so X_train already covers it -- only
+        # the newly-appended mirrored tail needs extracting.
+        X_new = np.stack(
+            [extract_features(Image.fromarray(img)) for img in images_train[n_train_after_rotation_augment:]]
+        )
+        X_train = np.concatenate([X_train, X_new])
+        y_train = np.array(labels_train)
+    n_train_after_flip_augment = len(images_train)
+
     print("Selecting best model via cross-validation on the training split:")
     best_name, best_estimator, cv_scores = select_best_model(X_train, y_train, groups=groups_train)
     print(f"Selected: {best_name} (cv balanced accuracy = {cv_scores[best_name]:.3f})")
@@ -596,6 +666,7 @@ def main() -> None:
             split_groups,
             lambda: clone(best_estimator),
             rotation_augment=rotation_augmented,
+            flip_augment=flip_augmented,
         )
         print(
             f"  test accuracy: {multi_seed_metrics['test_accuracy']['mean']:.3f} "
@@ -667,20 +738,28 @@ def main() -> None:
         # metrics in this model card describe the held-out-validated *approach*, not
         # a measurement of this exact final artifact.
         print("Retraining final checkpoint on 100% of the data (round 16) for shipping:")
+        full_images, full_labels = raw_images, labels
+        X_full, y_full = X_all, y_all
         if rotation_augmented:
             # Same reuse as the earlier augmentation step: _rotation_augment keeps
-            # raw_images unchanged as a prefix, and X_all already has its features
+            # the input unchanged as a prefix, and X_full already has its features
             # (assembled above in the same order) -- only the new rotated tail needs
             # extracting.
-            full_images, full_labels, _ = _rotation_augment(raw_images, labels)
-            X_new_full = np.stack(
-                [extract_features(Image.fromarray(img)) for img in full_images[len(raw_images) :]]
-            )
-            X_full = np.concatenate([X_all, X_new_full])
+            n_before = len(full_images)
+            full_images, full_labels, _ = _rotation_augment(full_images, full_labels)
+            X_new_full = np.stack([extract_features(Image.fromarray(img)) for img in full_images[n_before:]])
+            X_full = np.concatenate([X_full, X_new_full])
             y_full = np.array(full_labels)
-            print(f"Rotation-augmented full dataset for final refit: {len(raw_images)} -> {len(full_images)} images")
-        else:
-            X_full, y_full = X_all, y_all
+            print(f"Rotation-augmented full dataset for final refit: {n_before} -> {len(full_images)} images")
+        if flip_augmented:
+            # Round 29: same reuse pattern, applied on top of the rotation-augmented
+            # full set (or the raw full set if rotation augmentation is disabled).
+            n_before = len(full_images)
+            full_images, full_labels, _ = _flip_augment(full_images, full_labels)
+            X_new_full = np.stack([extract_features(Image.fromarray(img)) for img in full_images[n_before:]])
+            X_full = np.concatenate([X_full, X_new_full])
+            y_full = np.array(full_labels)
+            print(f"Flip-augmented full dataset for final refit: {n_before} -> {len(full_images)} images")
         model = OCTClassifier(clone(best_estimator))
         model.fit(X_full, y_full)
         shipped_on_full_dataset = True
@@ -696,6 +775,8 @@ def main() -> None:
         "minority_oversample_factor": args.minority_oversample,
         "rotation_augment_enabled": rotation_augmented,
         "n_train_samples_after_rotation_augment": n_train_after_rotation_augment,
+        "flip_augment_enabled": flip_augmented,
+        "n_train_samples_after_flip_augment": n_train_after_flip_augment,
         "classes": CLASSES,
         "selected_model": best_name,
         "cv_balanced_accuracy_by_model": cv_scores,
