@@ -25,17 +25,6 @@ function base(children: React.ReactNode, props: IconProps) {
   );
 }
 
-export function LogoIcon(props: IconProps) {
-  return base(
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="3.2" />
-      <path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21" />
-    </>,
-    props,
-  );
-}
-
 export function WaveLogoIcon(props: IconProps) {
   return (
     <svg viewBox="0 0 30 30" width="1.25em" height="1.25em" fill="none" {...props}>
@@ -53,16 +42,6 @@ export function WaveLogoIcon(props: IconProps) {
 
 export function PlusIcon(props: IconProps) {
   return base(<path d="M12 5v14M5 12h14" />, props);
-}
-
-export function PlusCircleIcon(props: IconProps) {
-  return base(
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 8v8M8 12h8" />
-    </>,
-    props,
-  );
 }
 
 export function ClockIcon(props: IconProps) {
@@ -83,20 +62,6 @@ export function UploadIcon(props: IconProps) {
     </>,
     props,
   );
-}
-
-export function SparkleIcon(props: IconProps) {
-  return base(
-    <>
-      <path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6L12 4Z" />
-      <path d="M19 4v3M19 5.5h1.5" />
-    </>,
-    props,
-  );
-}
-
-export function ChevronDownIcon(props: IconProps) {
-  return base(<path d="M6 9l6 6 6-6" />, props);
 }
 
 export function ImageIcon(props: IconProps) {
@@ -177,30 +142,6 @@ export function LogOutIcon(props: IconProps) {
   );
 }
 
-export function CheckCircleIcon(props: IconProps) {
-  return base(
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M8 12.5l2.5 2.5L16 9" />
-    </>,
-    props,
-  );
-}
-
-export function XCircleIcon(props: IconProps) {
-  return base(
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <path d="M9.5 9.5l5 5M14.5 9.5l-5 5" />
-    </>,
-    props,
-  );
-}
-
-export function LoaderIcon(props: IconProps) {
-  return base(<path d="M12 3v3M12 18v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" />, props);
-}
-
 export function MailIcon(props: IconProps) {
   return base(
     <>
@@ -233,15 +174,4 @@ export function UserIcon(props: IconProps) {
 
 export function ArrowLeftIcon(props: IconProps) {
   return base(<path d="M19 12H5M11 6l-6 6 6 6" />, props);
-}
-
-export function FolderClockIcon(props: IconProps) {
-  return base(
-    <>
-      <path d="M3 7a2 2 0 0 1 2-2h4l2 2.4H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
-      <path d="M14.5 13.2v2.4M14.5 13.2l1.7 1" />
-      <circle cx="14.5" cy="13.6" r="3.6" />
-    </>,
-    props,
-  );
 }

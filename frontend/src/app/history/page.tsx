@@ -7,7 +7,7 @@ import { ApiError, analysis, fetchImageObjectUrl, getToken, studies } from "@/li
 import type { AnalysisSummary, Study } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { TrendChart } from "@/components/TrendChart";
-import { AlertZoneIcon, FolderClockIcon, GaugeIcon } from "@/components/icons";
+import { ActivityIcon, AlertZoneIcon, GaugeIcon } from "@/components/icons";
 
 const STATUS_LABELS: Record<Study["status"], string> = {
   uploaded: "Загружено",
@@ -110,17 +110,19 @@ export default function HistoryPage() {
               <div className="card" style={{ marginBottom: 0 }}>
                 <p className="card-title">
                   <span className="card-title-icon">
-                    <AlertZoneIcon />
+                    <ActivityIcon />
                   </span>
                   Уверенность диагностики
                 </p>
                 <p className="mono" style={{ fontSize: 28, fontWeight: 800, margin: "4px 0 12px" }}>
-                  {confidencePoints.length > 0
-                    ? confidencePoints[confidencePoints.length - 1].value * 100 < 100
-                      ? (confidencePoints[confidencePoints.length - 1].value * 100).toFixed(1)
-                      : "100"
-                    : "—"}
-                  {confidencePoints.length > 0 && <span style={{ fontSize: 16, color: "var(--ink-soft)" }}>%</span>}
+                  {confidencePoints.length > 0 ? (
+                    <>
+                      {(confidencePoints[confidencePoints.length - 1].value * 100).toFixed(1)}
+                      <span style={{ fontSize: 16, color: "var(--ink-soft)" }}>%</span>
+                    </>
+                  ) : (
+                    "—"
+                  )}
                 </p>
                 <TrendChart points={confidencePoints} color="var(--success)" />
               </div>
