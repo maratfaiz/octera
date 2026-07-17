@@ -309,6 +309,36 @@ def _flip_augment(
     return out_images, out_labels, out_groups
 
 
+def _apply_augmentation_stage(
+    images: list[np.ndarray],
+    labels: list[str],
+    groups: list[str] | np.ndarray | None,
+    X_existing: np.ndarray,
+    augment_fn,
+    stage_name: str,
+) -> tuple[list[np.ndarray], list[str], np.ndarray | None, np.ndarray, np.ndarray]:
+    """Applies one augmentation stage (`_rotation_augment` or `_flip_augment`) and
+    extends an already-extracted feature matrix to match, extracting features only
+    for the newly-appended images rather than the whole augmented set.
+
+    Every augment_fn here keeps its input unchanged as a prefix of its output
+    (see their docstrings), so `X_existing` already covers `images[:n_before]` --
+    this used to be four hand-copied instances of the same "slice the new tail,
+    extract, concatenate" sequence (rotation and flip, each in both the
+    training-split and round-16 full-refit call sites); round 30 factored it out
+    before adding a third augmentation stage would have made it five and six.
+    """
+    n_before = len(images)
+    groups_list = list(groups) if groups is not None else None
+    images, labels, groups_list = augment_fn(images, labels, groups_list)
+    groups_out = np.array(groups_list) if groups_list is not None else None
+    print(f"{stage_name}: {n_before} -> {len(images)} images")
+    X_new = np.stack([extract_features(Image.fromarray(img)) for img in images[n_before:]])
+    X = np.concatenate([X_existing, X_new])
+    y = np.array(labels)
+    return images, labels, groups_out, X, y
+
+
 def _select_thresholds(y_true: np.ndarray, dme_proba: np.ndarray, min_recall: float = 0.85) -> dict:
     """Picks candidate DME probability cutoffs from a precision-recall curve.
 
@@ -592,28 +622,12 @@ def main() -> None:
     # PCA(75) once evaluated on the augmented data it's really trained on).
     # Augmentation now happens before selection, so both selection and the
     # final fit see the exact same data.
+    X_train, y_train = X_train_raw, y_train_raw
     rotation_augmented = data_source != "synthetic" and not args.no_rotation_augment
     if rotation_augmented:
-        groups_train_list = list(groups_train) if groups_train is not None else None
-        images_train, labels_train, groups_train_list = _rotation_augment(
-            images_train, labels_train, groups_train_list
+        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
+            images_train, labels_train, groups_train, X_train, _rotation_augment, "Rotation-augmented training split (round 23)"
         )
-        groups_train = np.array(groups_train_list) if groups_train_list is not None else None
-        print(
-            f"Rotation-augmented training split (round 23): "
-            f"{n_train_after_oversampling} -> {len(images_train)} images"
-        )
-        # _rotation_augment always keeps the original images unchanged as a prefix
-        # before appending rotated copies, so X_train_raw already covers
-        # images_train[:n_train_after_oversampling] -- only the newly-appended
-        # rotated copies need feature extraction, not the whole set.
-        X_new = np.stack(
-            [extract_features(Image.fromarray(img)) for img in images_train[n_train_after_oversampling:]]
-        )
-        X_train = np.concatenate([X_train_raw, X_new])
-        y_train = np.array(labels_train)
-    else:
-        X_train, y_train = X_train_raw, y_train_raw
     n_train_after_rotation_augment = len(images_train)
 
     # Round 29: flip-augmented training (see _flip_augment), applied on top of
@@ -622,18 +636,9 @@ def main() -> None:
     # so selection and the final fit again see identical data.
     flip_augmented = data_source != "synthetic" and not args.no_flip_augment
     if flip_augmented:
-        groups_train_list = list(groups_train) if groups_train is not None else None
-        images_train, labels_train, groups_train_list = _flip_augment(images_train, labels_train, groups_train_list)
-        groups_train = np.array(groups_train_list) if groups_train_list is not None else None
-        print(f"Flip-augmented training split (round 29): {n_train_after_rotation_augment} -> {len(images_train)} images")
-        # Same reuse pattern as rotation augmentation above: _flip_augment keeps
-        # the input unchanged as a prefix, so X_train already covers it -- only
-        # the newly-appended mirrored tail needs extracting.
-        X_new = np.stack(
-            [extract_features(Image.fromarray(img)) for img in images_train[n_train_after_rotation_augment:]]
+        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
+            images_train, labels_train, groups_train, X_train, _flip_augment, "Flip-augmented training split (round 29)"
         )
-        X_train = np.concatenate([X_train, X_new])
-        y_train = np.array(labels_train)
     n_train_after_flip_augment = len(images_train)
 
     print("Selecting best model via cross-validation on the training split:")
@@ -741,25 +746,13 @@ def main() -> None:
         full_images, full_labels = raw_images, labels
         X_full, y_full = X_all, y_all
         if rotation_augmented:
-            # Same reuse as the earlier augmentation step: _rotation_augment keeps
-            # the input unchanged as a prefix, and X_full already has its features
-            # (assembled above in the same order) -- only the new rotated tail needs
-            # extracting.
-            n_before = len(full_images)
-            full_images, full_labels, _ = _rotation_augment(full_images, full_labels)
-            X_new_full = np.stack([extract_features(Image.fromarray(img)) for img in full_images[n_before:]])
-            X_full = np.concatenate([X_full, X_new_full])
-            y_full = np.array(full_labels)
-            print(f"Rotation-augmented full dataset for final refit: {n_before} -> {len(full_images)} images")
+            full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
+                full_images, full_labels, None, X_full, _rotation_augment, "Rotation-augmented full dataset for final refit"
+            )
         if flip_augmented:
-            # Round 29: same reuse pattern, applied on top of the rotation-augmented
-            # full set (or the raw full set if rotation augmentation is disabled).
-            n_before = len(full_images)
-            full_images, full_labels, _ = _flip_augment(full_images, full_labels)
-            X_new_full = np.stack([extract_features(Image.fromarray(img)) for img in full_images[n_before:]])
-            X_full = np.concatenate([X_full, X_new_full])
-            y_full = np.array(full_labels)
-            print(f"Flip-augmented full dataset for final refit: {n_before} -> {len(full_images)} images")
+            full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
+                full_images, full_labels, None, X_full, _flip_augment, "Flip-augmented full dataset for final refit"
+            )
         model = OCTClassifier(clone(best_estimator))
         model.fit(X_full, y_full)
         shipped_on_full_dataset = True
