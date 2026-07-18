@@ -32,6 +32,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -632,6 +633,442 @@ def select_best_model(
     return best_name, clone(candidates[best_name]), scores
 
 
+def _run_synthetic_training(args: argparse.Namespace) -> None:
+    """Original single-process training flow, kept simple and unchanged for the
+    synthetic smoke-test path: the dataset is tiny (--synthetic-per-class, a
+    few hundred images by default), rotation/flip/brightness augmentation are
+    always gated off for it (`data_source == "synthetic"`), and multi-seed
+    evaluation and the round-16 full-dataset refit never run for it either --
+    none of round 30's OOM/subprocess-isolation concerns apply here, so this
+    stays a plain in-process run rather than the phase-subprocess machinery
+    `_run_real_training` below needs for the real dataset's much larger scale.
+    """
+    print(
+        "No --data-dir given: training on synthetic procedural data. "
+        "This checkpoint is a pipeline smoke test only and is NOT trained on real patients."
+    )
+    raw_images, labels = generate_dataset(n_per_class=args.synthetic_per_class, augment=not args.no_augment)
+    data_source = "synthetic"
+    split_groups = [str(i) for i in range(len(labels))]
+    train_idx, test_idx = _group_aware_split(labels, split_groups)
+    images_train = [raw_images[i] for i in train_idx]
+    images_test = [raw_images[i] for i in test_idx]
+    labels_train = [labels[i] for i in train_idx]
+    labels_test = [labels[i] for i in test_idx]
+
+    if args.minority_oversample > 1:
+        rng = np.random.default_rng(42)
+        before = Counter(labels_train)
+        images_train, labels_train, _ = _oversample_minority(
+            images_train, labels_train, rng, max_factor=args.minority_oversample
+        )
+        print(f"Oversampled minority classes in training split: {dict(before)} -> {dict(Counter(labels_train))}")
+    n_train_after_oversampling = len(images_train)
+
+    X_train = np.stack([extract_features(Image.fromarray(img)) for img in images_train])
+    X_test = np.stack([extract_features(Image.fromarray(img)) for img in images_test])
+    y_train = np.array(labels_train)
+    y_test = np.array(labels_test)
+
+    print("Selecting best model via cross-validation on the training split:")
+    best_name, best_estimator, cv_scores = select_best_model(X_train, y_train)
+    print(f"Selected: {best_name} (cv balanced accuracy = {cv_scores[best_name]:.3f})")
+
+    model = OCTClassifier(best_estimator)
+    model.fit(X_train, y_train)
+
+    preds = model.clf.predict(X_test)
+    test_accuracy = accuracy_score(y_test, preds)
+    report = classification_report(y_test, preds, output_dict=True)
+    print(f"Held-out test accuracy: {test_accuracy:.3f}")
+    print(classification_report(y_test, preds))
+
+    threshold_analysis = None
+    calibration_metrics = None
+    if "DME" in model.clf.classes_:
+        dme_class_idx = list(model.clf.classes_).index("DME")
+        test_dme_proba = model.clf.predict_proba(X_test)[:, dme_class_idx]
+        y_test_binary = (y_test == "DME").astype(int)
+        calibration_metrics = {
+            "brier_score": float(brier_score_loss(y_test_binary, test_dme_proba)),
+            "log_loss": float(log_loss(y_test_binary, test_dme_proba)),
+            "note": (
+                "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves "
+                "both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall "
+                "threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a "
+                "roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific "
+                "operating point -- not shipped, see README round 8."
+            ),
+        }
+        print(f"Calibration: Brier={calibration_metrics['brier_score']:.4f} LogLoss={calibration_metrics['log_loss']:.3f}")
+        print("Selecting DME decision thresholds via out-of-fold CV on the training split (not the test set):")
+        threshold_analysis = _cv_threshold_analysis(X_train, y_train, y_test, test_dme_proba, best_estimator)
+        best = threshold_analysis["best_f1_operating_point"]
+        print(
+            f"  best-F1 cutoff = {best['threshold']:.3f} "
+            f"(test precision {best['classification_report']['DME']['precision']:.2f} / "
+            f"recall {best['classification_report']['DME']['recall']:.2f})"
+        )
+        high_recall = threshold_analysis["high_recall_operating_point"]
+        if high_recall:
+            print(
+                f"  recall>=0.85 (on train CV) cutoff = {high_recall['threshold']:.3f} "
+                f"(test precision {high_recall['classification_report']['DME']['precision']:.2f} / "
+                f"recall {high_recall['classification_report']['DME']['recall']:.2f})"
+            )
+    else:
+        print(
+            f"WARNING: training split has no DME examples (classes seen: {list(model.clf.classes_)}) -- "
+            "skipping DME threshold/calibration analysis. This usually indicates a data-loading or "
+            "labeling problem rather than an expected outcome; the shipped checkpoint's metrics.json "
+            "will have null dme_threshold_analysis/dme_calibration_metrics fields as a result."
+        )
+
+    model.save(args.out)
+    print(f"Saved checkpoint to {args.out}")
+
+    metrics = {
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+        "data_source": data_source,
+        "n_samples": len(raw_images),
+        "n_train_samples_after_oversampling": n_train_after_oversampling,
+        "minority_oversample_factor": args.minority_oversample,
+        "rotation_augment_enabled": False,
+        "n_train_samples_after_rotation_augment": n_train_after_oversampling,
+        "flip_augment_enabled": False,
+        "n_train_samples_after_flip_augment": n_train_after_oversampling,
+        "brightness_augment_enabled": False,
+        "n_train_samples_after_brightness_augment": n_train_after_oversampling,
+        "classes": CLASSES,
+        "selected_model": best_name,
+        "cv_balanced_accuracy_by_model": cv_scores,
+        "test_accuracy": test_accuracy,
+        "classification_report": report,
+        "confusion_matrix": confusion_matrix(y_test, preds, labels=CLASSES).tolist(),
+        "trained_on_real_patient_data": False,
+        "dme_threshold_analysis": threshold_analysis,
+        "dme_calibration_metrics": calibration_metrics,
+        "multi_seed_evaluation": None,
+        "shipped_checkpoint_trained_on_full_dataset": False,
+    }
+    metrics_path = Path(args.out).with_name("metrics.json")
+    metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False))
+    print(f"Saved model card to {metrics_path}")
+
+
+def _run_select_phase(args: argparse.Namespace) -> dict:
+    """Phase 1 of the subprocess-isolated real-data pipeline (round 30): load,
+    oversample+augment the training split, select the best model type, fit it
+    on the single split, evaluate on the untouched held-out test set, and
+    compute calibration/threshold diagnostics. Invoked as its own fresh
+    subprocess (`python -m app.ml.train --phase select`) by the orchestrator
+    in main() -- see _multi_seed_evaluation's docstring for why: this phase's
+    own peak memory (~11GB, confirmed via two OOM kills with dmesg once the
+    augmented training set reached ~17500 images) must not stack with the
+    multi-seed and final-refit phases that follow, and the only way to
+    guarantee that is for the process holding it to actually exit rather than
+    just idle while waiting on child subprocesses.
+
+    Returns a JSON-serializable dict of everything the orchestrator needs for
+    the final model card. Does NOT save a checkpoint unless minority-oversample
+    is active (a non-default experimental flag) -- in that case no later phase
+    refits on the full dataset (mirroring the original single-process
+    behavior's X_all gating), so this phase's single-split model IS the final
+    artifact and must be saved here, since its fitted model object won't
+    survive past this process exiting.
+    """
+    raw_images, labels, groups = _load_real_dataset(args.data_dir)
+    if not raw_images:
+        raise SystemExit(f"No images matched between OCT.csv and OCT/OCT*/*.jpg under {args.data_dir}")
+    n_patients = len(set(groups))
+    print(f"Loaded {len(raw_images)} real images from {args.data_dir} ({n_patients} unique patients)")
+
+    train_idx, test_idx = _group_aware_split(labels, groups)
+    images_train = [raw_images[i] for i in train_idx]
+    images_test = [raw_images[i] for i in test_idx]
+    labels_train = [labels[i] for i in train_idx]
+    labels_test = [labels[i] for i in test_idx]
+    groups_train = np.array(groups)[train_idx]
+
+    if args.minority_oversample > 1:
+        rng = np.random.default_rng(42)
+        before = Counter(labels_train)
+        groups_train_list = list(groups_train)
+        images_train, labels_train, groups_train_list = _oversample_minority(
+            images_train, labels_train, rng, groups=groups_train_list, max_factor=args.minority_oversample
+        )
+        groups_train = np.array(groups_train_list)
+        print(f"Oversampled minority classes in training split: {dict(before)} -> {dict(Counter(labels_train))}")
+    n_train_after_oversampling = len(images_train)
+
+    X_train_raw = np.stack([extract_features(Image.fromarray(img)) for img in images_train])
+    X_test = np.stack([extract_features(Image.fromarray(img)) for img in images_test])
+    y_train_raw = np.array(labels_train)
+    y_test = np.array(labels_test)
+
+    X_train, y_train = X_train_raw, y_train_raw
+    rotation_augmented = not args.no_rotation_augment
+    if rotation_augmented:
+        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
+            images_train, labels_train, groups_train, X_train, _rotation_augment, "Rotation-augmented training split (round 23)"
+        )
+    n_train_after_rotation_augment = len(images_train)
+
+    flip_augmented = not args.no_flip_augment
+    if flip_augmented:
+        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
+            images_train, labels_train, groups_train, X_train, _flip_augment, "Flip-augmented training split (round 29)"
+        )
+    n_train_after_flip_augment = len(images_train)
+
+    brightness_augmented = not args.no_brightness_augment
+    if brightness_augmented:
+        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
+            images_train,
+            labels_train,
+            groups_train,
+            X_train,
+            _brightness_contrast_augment,
+            "Brightness/contrast-augmented training split (round 30)",
+        )
+    n_train_after_brightness_augment = len(images_train)
+
+    print("Selecting best model via cross-validation on the training split:")
+    best_name, best_estimator, cv_scores = select_best_model(X_train, y_train, groups=groups_train)
+    print(f"Selected: {best_name} (cv balanced accuracy = {cv_scores[best_name]:.3f})")
+
+    model = OCTClassifier(best_estimator)
+    model.fit(X_train, y_train)
+
+    preds = model.clf.predict(X_test)
+    test_accuracy = accuracy_score(y_test, preds)
+    report = classification_report(y_test, preds, output_dict=True)
+    print(f"Held-out test accuracy: {test_accuracy:.3f}")
+    print(classification_report(y_test, preds))
+
+    threshold_analysis = None
+    calibration_metrics = None
+    if "DME" in model.clf.classes_:
+        dme_class_idx = list(model.clf.classes_).index("DME")
+        test_dme_proba = model.clf.predict_proba(X_test)[:, dme_class_idx]
+        y_test_binary = (y_test == "DME").astype(int)
+        calibration_metrics = {
+            "brier_score": float(brier_score_loss(y_test_binary, test_dme_proba)),
+            # log_loss accepts a 1D array of positive-class (y_true==1, i.e. DME) probabilities for binary y_true.
+            "log_loss": float(log_loss(y_test_binary, test_dme_proba)),
+            "note": (
+                "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves "
+                "both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall "
+                "threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a "
+                "roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific "
+                "operating point -- not shipped, see README round 8."
+            ),
+        }
+        print(f"Calibration: Brier={calibration_metrics['brier_score']:.4f} LogLoss={calibration_metrics['log_loss']:.3f}")
+
+        print("Selecting DME decision thresholds via out-of-fold CV on the training split (not the test set):")
+        threshold_analysis = _cv_threshold_analysis(
+            X_train, y_train, y_test, test_dme_proba, best_estimator, groups_train=groups_train
+        )
+        best = threshold_analysis["best_f1_operating_point"]
+        print(
+            f"  best-F1 cutoff = {best['threshold']:.3f} "
+            f"(test precision {best['classification_report']['DME']['precision']:.2f} / "
+            f"recall {best['classification_report']['DME']['recall']:.2f})"
+        )
+        high_recall = threshold_analysis["high_recall_operating_point"]
+        if high_recall:
+            print(
+                f"  recall>=0.85 (on train CV) cutoff = {high_recall['threshold']:.3f} "
+                f"(test precision {high_recall['classification_report']['DME']['precision']:.2f} / "
+                f"recall {high_recall['classification_report']['DME']['recall']:.2f})"
+            )
+    else:
+        print(
+            f"WARNING: training split has no DME examples (classes seen: {list(model.clf.classes_)}) -- "
+            "skipping DME threshold/calibration analysis. This usually indicates a data-loading or "
+            "labeling problem rather than an expected outcome; the shipped checkpoint's metrics.json "
+            "will have null dme_threshold_analysis/dme_calibration_metrics fields as a result."
+        )
+
+    shipped_on_full_dataset = False
+    if args.minority_oversample > 1:
+        model.save(args.out)
+        print(f"Saved checkpoint to {args.out}")
+        shipped_on_full_dataset = False  # the caller won't run a full-dataset refit in this case
+
+    return {
+        "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
+        "n_samples": len(raw_images),
+        "n_train_samples_after_oversampling": n_train_after_oversampling,
+        "rotation_augment_enabled": rotation_augmented,
+        "n_train_samples_after_rotation_augment": n_train_after_rotation_augment,
+        "flip_augment_enabled": flip_augmented,
+        "n_train_samples_after_flip_augment": n_train_after_flip_augment,
+        "brightness_augment_enabled": brightness_augmented,
+        "n_train_samples_after_brightness_augment": n_train_after_brightness_augment,
+        "selected_model": best_name,
+        "cv_balanced_accuracy_by_model": cv_scores,
+        "test_accuracy": test_accuracy,
+        "classification_report": report,
+        "confusion_matrix": confusion_matrix(y_test, preds, labels=CLASSES).tolist(),
+        "dme_threshold_analysis": threshold_analysis,
+        "dme_calibration_metrics": calibration_metrics,
+        "shipped_checkpoint_trained_on_full_dataset": shipped_on_full_dataset,
+    }
+
+
+def _run_final_refit_phase(args: argparse.Namespace) -> None:
+    """Phase 2 of the subprocess-isolated real-data pipeline (round 30, round
+    16 originally): reload the full dataset, apply the same augmentation
+    recipe to 100% of it, fit the given (already-selected, by
+    `--estimator-name`) model type, and save it as the shipped checkpoint.
+    Invoked as its own fresh subprocess by the orchestrator in main() -- see
+    _run_select_phase's docstring for why this can't just continue in the
+    process that ran selection.
+
+    Re-extracts features for the raw (unaugmented) images from scratch rather
+    than reusing the select phase's already-computed ones, since those don't
+    survive that phase's process exiting -- a few seconds of redundant I/O,
+    traded for the memory isolation that's the whole point of this split.
+    """
+    raw_images, labels, groups = _load_real_dataset(args.data_dir)
+    full_images, full_labels = raw_images, labels
+    X_full = np.stack([extract_features(Image.fromarray(img)) for img in raw_images])
+    y_full = np.array(labels)
+
+    print("Retraining final checkpoint on 100% of the data (round 16) for shipping:")
+    if not args.no_rotation_augment:
+        full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
+            full_images, full_labels, None, X_full, _rotation_augment, "Rotation-augmented full dataset for final refit"
+        )
+    if not args.no_flip_augment:
+        full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
+            full_images, full_labels, None, X_full, _flip_augment, "Flip-augmented full dataset for final refit"
+        )
+    if not args.no_brightness_augment:
+        full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
+            full_images,
+            full_labels,
+            None,
+            X_full,
+            _brightness_contrast_augment,
+            "Brightness/contrast-augmented full dataset for final refit",
+        )
+
+    estimator = _candidate_estimators()[args.estimator_name]
+    model = OCTClassifier(estimator)
+    model.fit(X_full, y_full)
+    model.save(args.out)
+    print(f"Saved checkpoint to {args.out}")
+
+
+def _phase_subprocess_cmd(args: argparse.Namespace) -> list[str]:
+    """Common flags shared by every phase subprocess the orchestrator launches."""
+    cmd = [sys.executable, "-m", "app.ml.train", "--data-dir", args.data_dir]
+    if args.no_rotation_augment:
+        cmd.append("--no-rotation-augment")
+    if args.no_flip_augment:
+        cmd.append("--no-flip-augment")
+    if args.no_brightness_augment:
+        cmd.append("--no-brightness-augment")
+    if args.minority_oversample != 1:
+        cmd += ["--minority-oversample", str(args.minority_oversample)]
+    return cmd
+
+
+def _run_real_training(args: argparse.Namespace) -> None:
+    """Thin orchestrator for the real-dataset training pipeline (round 30):
+    launches the select phase, then (if eligible -- see below) multi-seed
+    evaluation and the final-refit phase, each as its own fresh subprocess
+    with live (uncaptured) output so progress still streams normally. This
+    process itself never touches a feature matrix or a fitted model, so its
+    own memory stays trivial throughout -- the actual fix for the OOM kills
+    round 30 hit twice, see _run_select_phase's docstring.
+    """
+    with tempfile.NamedTemporaryFile(mode="r", suffix=".json", delete=False) as tmp:
+        select_output_path = tmp.name
+    try:
+        subprocess.run(
+            _phase_subprocess_cmd(args) + ["--phase", "select", "--phase-output", select_output_path, "--out", args.out],
+            check=True,
+        )
+        select_result = json.loads(Path(select_output_path).read_text())
+    finally:
+        Path(select_output_path).unlink(missing_ok=True)
+
+    best_name = select_result["selected_model"]
+    # Mirrors the original single-process X_all gating: no full-dataset refit
+    # (and no multi-seed characterization of it) when minority-oversample is
+    # active, since that's a non-default experimental path this project found
+    # doesn't help -- see README and _oversample_minority's docstring.
+    run_full_pipeline = args.minority_oversample == 1
+
+    multi_seed_metrics = None
+    shipped_on_full_dataset = False
+    if run_full_pipeline:
+        print("Evaluating across multiple train/test splits (round 15) to characterize typical performance:")
+        multi_seed_metrics = _multi_seed_evaluation(
+            args.data_dir,
+            best_name,
+            rotation_augment=select_result["rotation_augment_enabled"],
+            flip_augment=select_result["flip_augment_enabled"],
+            brightness_augment=select_result["brightness_augment_enabled"],
+        )
+        print(
+            f"  test accuracy: {multi_seed_metrics['test_accuracy']['mean']:.3f} "
+            f"(+/- {multi_seed_metrics['test_accuracy']['std']:.3f})"
+        )
+        print(
+            f"  DME precision: {multi_seed_metrics['dme_precision']['mean']:.3f} "
+            f"(+/- {multi_seed_metrics['dme_precision']['std']:.3f})"
+        )
+        print(
+            f"  DME recall: {multi_seed_metrics['dme_recall']['mean']:.3f} "
+            f"(+/- {multi_seed_metrics['dme_recall']['std']:.3f})"
+        )
+
+        subprocess.run(
+            _phase_subprocess_cmd(args)
+            + ["--phase", "final-refit", "--estimator-name", best_name, "--out", args.out],
+            check=True,
+        )
+        shipped_on_full_dataset = True
+
+    metrics = {
+        "trained_at": datetime.now(timezone.utc).isoformat(),
+        "n_train_samples_after_oversampling": select_result["n_train_samples_after_oversampling"],
+        "minority_oversample_factor": args.minority_oversample,
+        "rotation_augment_enabled": select_result["rotation_augment_enabled"],
+        "n_train_samples_after_rotation_augment": select_result["n_train_samples_after_rotation_augment"],
+        "flip_augment_enabled": select_result["flip_augment_enabled"],
+        "n_train_samples_after_flip_augment": select_result["n_train_samples_after_flip_augment"],
+        "brightness_augment_enabled": select_result["brightness_augment_enabled"],
+        "n_train_samples_after_brightness_augment": select_result["n_train_samples_after_brightness_augment"],
+        "classes": CLASSES,
+        "trained_on_real_patient_data": True,
+        **{
+            k: select_result[k]
+            for k in (
+                "data_source",
+                "n_samples",
+                "selected_model",
+                "cv_balanced_accuracy_by_model",
+                "test_accuracy",
+                "classification_report",
+                "confusion_matrix",
+                "dme_threshold_analysis",
+                "dme_calibration_metrics",
+            )
+        },
+        "multi_seed_evaluation": multi_seed_metrics,
+        "shipped_checkpoint_trained_on_full_dataset": shipped_on_full_dataset,
+    }
+    metrics_path = Path(args.out).with_name("metrics.json")
+    metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False))
+    print(f"Saved model card to {metrics_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data-dir", type=str, default=None, help="Path to a OCT-AND-EYE-FUNDUS-DATASET checkout")
@@ -681,6 +1118,14 @@ def main() -> None:
         help=argparse.SUPPRESS,  # internal: subprocess entry point for _multi_seed_evaluation, see round 30
     )
     parser.add_argument("--multi-seed-worker-estimator", type=str, default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--phase",
+        choices=["select", "final-refit"],
+        default=None,
+        help=argparse.SUPPRESS,  # internal: subprocess entry points for _run_real_training, see round 30
+    )
+    parser.add_argument("--phase-output", type=str, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--estimator-name", type=str, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     if args.multi_seed_worker_seed is not None:
@@ -698,249 +1143,20 @@ def main() -> None:
         print(json.dumps(result))
         return
 
-    groups: list[str] | None
-    if args.data_dir:
-        raw_images, labels, groups = _load_real_dataset(args.data_dir)
-        if not raw_images:
-            raise SystemExit(f"No images matched between OCT.csv and OCT/OCT*/*.jpg under {args.data_dir}")
-        data_source = "real:OCT-AND-EYE-FUNDUS-DATASET"
-        n_patients = len(set(groups))
-        print(f"Loaded {len(raw_images)} real images from {args.data_dir} ({n_patients} unique patients)")
-    else:
-        print(
-            "No --data-dir given: training on synthetic procedural data. "
-            "This checkpoint is a pipeline smoke test only and is NOT trained on real patients."
-        )
-        data_source = "synthetic"
-        raw_images, labels = generate_dataset(n_per_class=args.synthetic_per_class, augment=not args.no_augment)
-        groups = None  # no patient concept for procedurally generated images
+    if args.phase == "select":
+        result = _run_select_phase(args)
+        Path(args.phase_output).write_text(json.dumps(result))
+        return
 
-    # A patient's images (both eyes, repeat visits) never span both splits -- see
-    # _group_aware_split and README round 10. Synthetic images have no group
-    # concept, so each gets its own trivial one-sample group (a no-op constraint).
-    split_groups = groups if groups is not None else [str(i) for i in range(len(labels))]
-    train_idx, test_idx = _group_aware_split(labels, split_groups)
-    images_train = [raw_images[i] for i in train_idx]
-    images_test = [raw_images[i] for i in test_idx]
-    labels_train = [labels[i] for i in train_idx]
-    labels_test = [labels[i] for i in test_idx]
-    groups_train = np.array(split_groups)[train_idx] if groups is not None else None
+    if args.phase == "final-refit":
+        _run_final_refit_phase(args)
+        return
 
-    if args.minority_oversample > 1:
-        rng = np.random.default_rng(42)
-        before = Counter(labels_train)
-        groups_train_list = list(groups_train) if groups_train is not None else None
-        images_train, labels_train, groups_train_list = _oversample_minority(
-            images_train, labels_train, rng, groups=groups_train_list, max_factor=args.minority_oversample
-        )
-        groups_train = np.array(groups_train_list) if groups_train_list is not None else None
-        print(f"Oversampled minority classes in training split: {dict(before)} -> {dict(Counter(labels_train))}")
-    n_train_after_oversampling = len(images_train)
+    if not args.data_dir:
+        _run_synthetic_training(args)
+        return
 
-    # Unaugmented features -- always needed for X_all (the round-16 "ship on 100%
-    # of data" refit when rotation augmentation is disabled below), regardless of
-    # what candidate selection and the final single-split fit end up using.
-    X_train_raw = np.stack([extract_features(Image.fromarray(img)) for img in images_train])
-    X_test = np.stack([extract_features(Image.fromarray(img)) for img in images_test])
-    y_train_raw = np.array(labels_train)
-    y_test = np.array(labels_test)
-
-    # Round 23: rotation-augmented training (see _rotation_augment). Originally
-    # applied only after candidate selection, matching every prior round's
-    # methodology -- but round 27 found that selecting a model/hyperparameter on
-    # data different from what's actually fit afterward can pick a measurably
-    # worse choice (PCA(30), tuned in round 11 pre-augmentation, loses to
-    # PCA(75) once evaluated on the augmented data it's really trained on).
-    # Augmentation now happens before selection, so both selection and the
-    # final fit see the exact same data.
-    X_train, y_train = X_train_raw, y_train_raw
-    rotation_augmented = data_source != "synthetic" and not args.no_rotation_augment
-    if rotation_augmented:
-        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
-            images_train, labels_train, groups_train, X_train, _rotation_augment, "Rotation-augmented training split (round 23)"
-        )
-    n_train_after_rotation_augment = len(images_train)
-
-    # Round 29: flip-augmented training (see _flip_augment), applied on top of
-    # whatever rotation augmentation produced above -- same before-selection
-    # placement and same reasoning as round 27/28 for rotation augmentation,
-    # so selection and the final fit again see identical data.
-    flip_augmented = data_source != "synthetic" and not args.no_flip_augment
-    if flip_augmented:
-        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
-            images_train, labels_train, groups_train, X_train, _flip_augment, "Flip-augmented training split (round 29)"
-        )
-    n_train_after_flip_augment = len(images_train)
-
-    # Round 30: brightness/contrast-augmented training (see
-    # _brightness_contrast_augment), applied on top of rotation+flip -- same
-    # before-selection placement, same reasoning.
-    brightness_augmented = data_source != "synthetic" and not args.no_brightness_augment
-    if brightness_augmented:
-        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
-            images_train,
-            labels_train,
-            groups_train,
-            X_train,
-            _brightness_contrast_augment,
-            "Brightness/contrast-augmented training split (round 30)",
-        )
-    n_train_after_brightness_augment = len(images_train)
-
-    print("Selecting best model via cross-validation on the training split:")
-    best_name, best_estimator, cv_scores = select_best_model(X_train, y_train, groups=groups_train)
-    print(f"Selected: {best_name} (cv balanced accuracy = {cv_scores[best_name]:.3f})")
-
-    model = OCTClassifier(best_estimator)
-    model.fit(X_train, y_train)
-
-    preds = model.clf.predict(X_test)
-    test_accuracy = accuracy_score(y_test, preds)
-    report = classification_report(y_test, preds, output_dict=True)
-    print(f"Held-out test accuracy: {test_accuracy:.3f}")
-    print(classification_report(y_test, preds))
-
-    X_all: np.ndarray | None = None
-    y_all: np.ndarray | None = None
-    if data_source != "synthetic" and args.minority_oversample == 1:
-        X_all = np.empty((len(raw_images), X_train_raw.shape[1]), dtype=X_train_raw.dtype)
-        X_all[train_idx] = X_train_raw
-        X_all[test_idx] = X_test
-        y_all = np.array(labels)
-
-    multi_seed_metrics = None
-    if X_all is not None:
-        print("Evaluating across multiple train/test splits (round 15) to characterize typical performance:")
-        multi_seed_metrics = _multi_seed_evaluation(
-            args.data_dir,
-            best_name,
-            rotation_augment=rotation_augmented,
-            flip_augment=flip_augmented,
-            brightness_augment=brightness_augmented,
-        )
-        print(
-            f"  test accuracy: {multi_seed_metrics['test_accuracy']['mean']:.3f} "
-            f"(+/- {multi_seed_metrics['test_accuracy']['std']:.3f})"
-        )
-        print(
-            f"  DME precision: {multi_seed_metrics['dme_precision']['mean']:.3f} "
-            f"(+/- {multi_seed_metrics['dme_precision']['std']:.3f})"
-        )
-        print(
-            f"  DME recall: {multi_seed_metrics['dme_recall']['mean']:.3f} "
-            f"(+/- {multi_seed_metrics['dme_recall']['std']:.3f})"
-        )
-
-    threshold_analysis = None
-    calibration_metrics = None
-    if "DME" in model.clf.classes_:
-        dme_class_idx = list(model.clf.classes_).index("DME")
-        test_dme_proba = model.clf.predict_proba(X_test)[:, dme_class_idx]
-        y_test_binary = (y_test == "DME").astype(int)
-        calibration_metrics = {
-            "brier_score": float(brier_score_loss(y_test_binary, test_dme_proba)),
-            # log_loss accepts a 1D array of positive-class (y_true==1, i.e. DME) probabilities for binary y_true.
-            "log_loss": float(log_loss(y_test_binary, test_dme_proba)),
-            "note": (
-                "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves "
-                "both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall "
-                "threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a "
-                "roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific "
-                "operating point -- not shipped, see README round 8."
-            ),
-        }
-        print(f"Calibration: Brier={calibration_metrics['brier_score']:.4f} LogLoss={calibration_metrics['log_loss']:.3f}")
-
-        print("Selecting DME decision thresholds via out-of-fold CV on the training split (not the test set):")
-        threshold_analysis = _cv_threshold_analysis(
-            X_train, y_train, y_test, test_dme_proba, best_estimator, groups_train=groups_train
-        )
-        best = threshold_analysis["best_f1_operating_point"]
-        print(
-            f"  best-F1 cutoff = {best['threshold']:.3f} "
-            f"(test precision {best['classification_report']['DME']['precision']:.2f} / "
-            f"recall {best['classification_report']['DME']['recall']:.2f})"
-        )
-        high_recall = threshold_analysis["high_recall_operating_point"]
-        if high_recall:
-            print(
-                f"  recall>=0.85 (on train CV) cutoff = {high_recall['threshold']:.3f} "
-                f"(test precision {high_recall['classification_report']['DME']['precision']:.2f} / "
-                f"recall {high_recall['classification_report']['DME']['recall']:.2f})"
-            )
-    else:
-        print(
-            f"WARNING: training split has no DME examples (classes seen: {list(model.clf.classes_)}) -- "
-            "skipping DME threshold/calibration analysis. This usually indicates a data-loading or "
-            "labeling problem rather than an expected outcome; the shipped checkpoint's metrics.json "
-            "will have null dme_threshold_analysis/dme_calibration_metrics fields as a result."
-        )
-
-    shipped_on_full_dataset = False
-    if X_all is not None:
-        # All metrics above (test_accuracy, threshold_analysis, calibration_metrics,
-        # multi_seed_metrics) were measured on a model trained on ~80% of the data --
-        # that's the honest way to estimate generalization. But this dataset is small
-        # (1113 images total) and every labeled image is precious, so the checkpoint
-        # actually shipped is refit on 100% of it (round 16), standard practice once
-        # validation is done: more real training data should only help, not hurt, a
-        # model that already generalized well on the held-out estimates above. The
-        # metrics in this model card describe the held-out-validated *approach*, not
-        # a measurement of this exact final artifact.
-        print("Retraining final checkpoint on 100% of the data (round 16) for shipping:")
-        full_images, full_labels = raw_images, labels
-        X_full, y_full = X_all, y_all
-        if rotation_augmented:
-            full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
-                full_images, full_labels, None, X_full, _rotation_augment, "Rotation-augmented full dataset for final refit"
-            )
-        if flip_augmented:
-            full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
-                full_images, full_labels, None, X_full, _flip_augment, "Flip-augmented full dataset for final refit"
-            )
-        if brightness_augmented:
-            full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
-                full_images,
-                full_labels,
-                None,
-                X_full,
-                _brightness_contrast_augment,
-                "Brightness/contrast-augmented full dataset for final refit",
-            )
-        model = OCTClassifier(clone(best_estimator))
-        model.fit(X_full, y_full)
-        shipped_on_full_dataset = True
-
-    model.save(args.out)
-    print(f"Saved checkpoint to {args.out}")
-
-    metrics = {
-        "trained_at": datetime.now(timezone.utc).isoformat(),
-        "data_source": data_source,
-        "n_samples": len(raw_images),
-        "n_train_samples_after_oversampling": n_train_after_oversampling,
-        "minority_oversample_factor": args.minority_oversample,
-        "rotation_augment_enabled": rotation_augmented,
-        "n_train_samples_after_rotation_augment": n_train_after_rotation_augment,
-        "flip_augment_enabled": flip_augmented,
-        "n_train_samples_after_flip_augment": n_train_after_flip_augment,
-        "brightness_augment_enabled": brightness_augmented,
-        "n_train_samples_after_brightness_augment": n_train_after_brightness_augment,
-        "classes": CLASSES,
-        "selected_model": best_name,
-        "cv_balanced_accuracy_by_model": cv_scores,
-        "test_accuracy": test_accuracy,
-        "classification_report": report,
-        "confusion_matrix": confusion_matrix(y_test, preds, labels=CLASSES).tolist(),
-        "trained_on_real_patient_data": data_source != "synthetic",
-        "dme_threshold_analysis": threshold_analysis,
-        "dme_calibration_metrics": calibration_metrics,
-        "multi_seed_evaluation": multi_seed_metrics,
-        "shipped_checkpoint_trained_on_full_dataset": shipped_on_full_dataset,
-    }
-    metrics_path = Path(args.out).with_name("metrics.json")
-    metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False))
-    print(f"Saved model card to {metrics_path}")
+    _run_real_training(args)
 
 
 if __name__ == "__main__":
