@@ -1160,13 +1160,18 @@ def main() -> None:
     # a cheap flag with an expensive phase -- load/augment/fit can run for
     # minutes to hours before the missing partner flag would otherwise surface
     # as a confusing KeyError/TypeError deep inside the phase. Fail fast
-    # instead, before any of that work starts.
+    # instead, before any of that work starts. All three also need --data-dir
+    # (a test writing a bare `--multi-seed-worker-seed ... --multi-seed-worker-
+    # estimator ...` invocation caught this: without it, _load_real_dataset's
+    # `Path(None)` raises a raw TypeError instead of an actionable message).
     if args.multi_seed_worker_seed is not None and args.multi_seed_worker_estimator is None:
         parser.error("--multi-seed-worker-seed requires --multi-seed-worker-estimator")
     if args.phase == "select" and args.phase_output is None:
         parser.error("--phase select requires --phase-output")
     if args.phase == "final-refit" and args.estimator_name is None:
         parser.error("--phase final-refit requires --estimator-name")
+    if (args.multi_seed_worker_seed is not None or args.phase is not None) and args.data_dir is None:
+        parser.error("--multi-seed-worker-seed/--phase requires --data-dir")
 
     if args.multi_seed_worker_seed is not None:
         # Isolated single-seed evaluation, invoked as a fresh subprocess by
