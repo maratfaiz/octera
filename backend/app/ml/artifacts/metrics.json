@@ -1,70 +1,72 @@
 {
-  "trained_at": "2026-07-17T13:58:55.416461+00:00",
-  "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
-  "n_samples": 1113,
+  "trained_at": "2026-07-18T06:18:40.218792+00:00",
   "n_train_samples_after_oversampling": 878,
   "minority_oversample_factor": 1,
   "rotation_augment_enabled": true,
   "n_train_samples_after_rotation_augment": 4390,
   "flip_augment_enabled": true,
   "n_train_samples_after_flip_augment": 8780,
+  "brightness_augment_enabled": true,
+  "n_train_samples_after_brightness_augment": 17560,
   "classes": [
     "NORMAL",
     "DME"
   ],
+  "trained_on_real_patient_data": true,
+  "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
+  "n_samples": 1113,
   "selected_model": "svm_rbf_pca75",
   "cv_balanced_accuracy_by_model": {
-    "mlp_128_64": 0.8538509274605486,
-    "mlp_64": 0.8559648531285576,
-    "random_forest": 0.67575208235787,
-    "svm_rbf": 0.867583779231523,
-    "svm_rbf_pca30": 0.8751128801985102,
-    "svm_rbf_pca75": 0.8940880394160594
+    "mlp_128_64": 0.8584274712414848,
+    "mlp_64": 0.8537776861196587,
+    "random_forest": 0.6803711617760362,
+    "svm_rbf": 0.8639799028267097,
+    "svm_rbf_pca30": 0.8752758938316052,
+    "svm_rbf_pca75": 0.8901346641092669
   },
-  "test_accuracy": 0.948936170212766,
+  "test_accuracy": 0.9404255319148936,
   "classification_report": {
     "DME": {
-      "precision": 0.8085106382978723,
-      "recall": 0.926829268292683,
-      "f1-score": 0.8636363636363636,
+      "precision": 0.7872340425531915,
+      "recall": 0.9024390243902439,
+      "f1-score": 0.8409090909090909,
       "support": 41.0
     },
     "NORMAL": {
-      "precision": 0.9840425531914894,
-      "recall": 0.9536082474226805,
-      "f1-score": 0.9685863874345549,
+      "precision": 0.9787234042553191,
+      "recall": 0.9484536082474226,
+      "f1-score": 0.9633507853403142,
       "support": 194.0
     },
-    "accuracy": 0.948936170212766,
+    "accuracy": 0.9404255319148936,
     "macro avg": {
-      "precision": 0.8962765957446808,
-      "recall": 0.9402187578576817,
-      "f1-score": 0.9161113755354593,
+      "precision": 0.8829787234042553,
+      "recall": 0.9254463163188333,
+      "f1-score": 0.9021299381247025,
       "support": 235.0
     },
     "weighted avg": {
-      "precision": 0.9534178361249435,
-      "recall": 0.948936170212766,
-      "f1-score": 0.9502759577506152,
+      "precision": 0.9453146220009054,
+      "recall": 0.9404255319148936,
+      "f1-score": 0.9419886173757178,
       "support": 235.0
     }
   },
   "confusion_matrix": [
     [
-      185,
-      9
+      184,
+      10
     ],
     [
-      3,
-      38
+      4,
+      37
     ]
   ],
-  "trained_on_real_patient_data": true,
   "dme_threshold_analysis": {
     "selection_method": "thresholds chosen via 4-fold out-of-fold CV on the training split only; metrics below are the test set graded at those thresholds, not used to pick them",
     "default_threshold": 0.5,
     "best_f1_operating_point": {
-      "threshold": 0.46708739257558995,
+      "threshold": 0.300363017432495,
       "classification_report": {
         "NORMAL": {
           "precision": 0.9738219895287958,
@@ -104,7 +106,7 @@
       ]
     },
     "high_recall_operating_point": {
-      "threshold": 0.22034314113201844,
+      "threshold": 0.1185806080881238,
       "classification_report": {
         "NORMAL": {
           "precision": 0.983957219251337,
@@ -145,8 +147,8 @@
     }
   },
   "dme_calibration_metrics": {
-    "brier_score": 0.03876428940669416,
-    "log_loss": 0.14587648404690237,
+    "brier_score": 0.040912253383694246,
+    "log_loss": 0.18323863735863075,
     "note": "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific operating point -- not shipped, see README round 8."
   },
   "multi_seed_evaluation": {
@@ -159,37 +161,38 @@
     ],
     "rotation_augment": true,
     "flip_augment": true,
+    "brightness_augment": true,
     "test_accuracy": {
-      "mean": 0.9508062664732442,
-      "std": 0.012459979833840075,
+      "mean": 0.958141466884243,
+      "std": 0.014076140496886567,
       "values": [
-        0.948936170212766,
-        0.9551569506726457,
-        0.9395348837209302,
-        0.9723502304147466,
-        0.9380530973451328
+        0.9404255319148936,
+        0.9641255605381166,
+        0.9488372093023256,
+        0.9815668202764977,
+        0.9557522123893806
       ]
     },
     "dme_precision": {
-      "mean": 0.8031899325376234,
-      "std": 0.0710321143346997,
+      "mean": 0.853200823395088,
+      "std": 0.08255971101362286,
       "values": [
-        0.8085106382978723,
-        0.8125,
-        0.68,
-        0.9024390243902439,
-        0.8125
+        0.7872340425531915,
+        0.8666666666666667,
+        0.7391304347826086,
+        0.972972972972973,
+        0.9
       ]
     },
     "dme_recall": {
-      "mean": 0.8559294077515025,
-      "std": 0.07615263507874709,
+      "mean": 0.851805506783986,
+      "std": 0.05906856730925735,
       "values": [
-        0.926829268292683,
+        0.9024390243902439,
         0.8666666666666667,
         0.7727272727272727,
-        0.9487179487179487,
-        0.7647058823529411
+        0.9230769230769231,
+        0.7941176470588235
       ]
     },
     "seeds_skipped_no_dme_in_test_fold": []
