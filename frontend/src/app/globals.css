@@ -15,6 +15,12 @@
   --success-soft: #e9f8f0;
   --danger: #c23434;
   --danger-soft: #fbeaea;
+  --sidebar-bg: #0f1b2d;
+  --sidebar-text: #e7ecf3;
+  --sidebar-text-soft: #8fa0bd;
+  --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
+  --sidebar-active-bg: rgba(79, 141, 255, 0.18);
+  --sidebar-border: rgba(255, 255, 255, 0.08);
   --font-sans: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 }
@@ -80,10 +86,10 @@ a {
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 16px;
   padding: 20px;
   margin-bottom: 16px;
-  box-shadow: 0 1px 2px rgba(15, 27, 45, 0.04);
+  box-shadow: 0 2px 10px rgba(15, 27, 45, 0.06), 0 1px 2px rgba(15, 27, 45, 0.04);
 }
 
 .card-title {
@@ -259,6 +265,19 @@ button.secondary:hover:not(:disabled) {
   background: var(--amber-soft);
 }
 
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(11, 95, 255, 0.28);
+}
+
 .pill-dot {
   width: 6px;
   height: 6px;
@@ -276,15 +295,15 @@ button.secondary:hover:not(:disabled) {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border-right: 1px solid var(--line);
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--sidebar-border);
 }
 
 .sidebar-logo {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--ink);
+  color: var(--sidebar-text);
   text-decoration: none;
   padding: 22px 20px 18px;
 }
@@ -293,7 +312,7 @@ button.secondary:hover:not(:disabled) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent);
+  color: #6fa3ff;
   flex-shrink: 0;
 }
 
@@ -307,7 +326,7 @@ button.secondary:hover:not(:disabled) {
 .sidebar-logo-tag {
   font-size: 10px;
   font-weight: 600;
-  color: var(--ink-soft);
+  color: var(--sidebar-text-soft);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -326,7 +345,7 @@ button.secondary:hover:not(:disabled) {
   gap: 10px;
   padding: 10px 12px;
   border-radius: 10px;
-  color: var(--ink-soft);
+  color: var(--sidebar-text-soft);
   text-decoration: none;
   font-size: 14px;
   font-weight: 600;
@@ -334,13 +353,13 @@ button.secondary:hover:not(:disabled) {
 }
 
 .sidebar-link:hover {
-  background: var(--track);
-  color: var(--ink);
+  background: var(--sidebar-hover-bg);
+  color: var(--sidebar-text);
 }
 
 .sidebar-link.active {
-  background: var(--accent-soft);
-  color: var(--accent-dark);
+  background: var(--sidebar-active-bg);
+  color: #fff;
 }
 
 .sidebar-link-icon {
@@ -351,7 +370,7 @@ button.secondary:hover:not(:disabled) {
 
 .sidebar-footer {
   margin-top: auto;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--sidebar-border);
   padding: 16px 20px;
   display: flex;
   flex-direction: column;
@@ -363,14 +382,15 @@ button.secondary:hover:not(:disabled) {
   align-items: center;
   gap: 10px;
   font-size: 13px;
+  color: var(--sidebar-text);
 }
 
 .sidebar-avatar {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: var(--accent-soft);
-  color: var(--accent-dark);
+  background: var(--accent);
+  color: #fff;
   font-weight: 700;
   font-size: 13px;
   display: flex;
@@ -383,7 +403,7 @@ button.secondary:hover:not(:disabled) {
   background: none;
   border: none;
   box-shadow: none;
-  color: var(--ink-soft);
+  color: var(--sidebar-text-soft);
   font-size: 11px;
   padding: 0;
   font-weight: 400;
@@ -394,13 +414,13 @@ button.secondary:hover:not(:disabled) {
 
 .sidebar-logout:hover:not(:disabled) {
   transform: none;
-  color: var(--ink);
+  color: var(--sidebar-text);
   background: none;
 }
 
 .sidebar-version {
   font-size: 10px;
-  color: var(--ink-faint);
+  color: rgba(255, 255, 255, 0.3);
   font-family: var(--font-mono);
 }
 
@@ -607,17 +627,32 @@ button.secondary:hover:not(:disabled) {
 }
 
 .report-banner {
-  background: var(--amber-soft);
-  border: 1px solid #f3dbae;
+  background: var(--accent-soft);
+  border: 1px solid #c3d8ff;
   border-radius: 10px;
   padding: 10px 14px;
   font-size: 12.5px;
-  color: var(--amber);
+  color: var(--accent-dark);
   font-weight: 600;
   margin-bottom: 16px;
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.report-body {
+  position: relative;
+  overflow: hidden;
+}
+
+.report-wave {
+  position: absolute;
+  right: -10px;
+  bottom: -14px;
+  width: 130px;
+  height: auto;
+  color: var(--accent-soft);
+  pointer-events: none;
 }
 
 .report-text {

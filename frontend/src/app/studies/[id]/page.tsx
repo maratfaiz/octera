@@ -17,6 +17,7 @@ import {
   LayersMapIcon,
   ReportIcon,
   RulerIcon,
+  ShieldCheckIcon,
   WaveLogoIcon,
 } from "@/components/icons";
 
@@ -101,7 +102,12 @@ export default function StudyPage() {
               )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {result && <div className="pill pill-amber">Предварительное заключение</div>}
+              {result && (
+                <div className="status-badge">
+                  <ShieldCheckIcon />
+                  Предварительное заключение
+                </div>
+              )}
               {result && (
                 <button type="button" className="secondary no-print" onClick={() => window.print()}>
                   Скачать PDF
@@ -213,10 +219,20 @@ export default function StudyPage() {
                       AI-заключение
                     </p>
                     <div className="report-banner">
-                      <AlertZoneIcon />
+                      <ShieldCheckIcon />
                       Автоматическое заключение носит предварительный характер и требует подтверждения врачом.
                     </div>
-                    <p className="report-text">{result.report_text}</p>
+                    <div className="report-body">
+                      <p className="report-text">{result.report_text}</p>
+                      <svg className="report-wave" viewBox="0 0 160 90" fill="none" aria-hidden="true">
+                        <path
+                          d="M0 60 C 20 40, 35 75, 55 55 S 90 30, 110 50 S 145 70, 160 45"
+                          stroke="currentColor"
+                          strokeWidth={10}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </div>
                   </div>
                 </>
               )}
