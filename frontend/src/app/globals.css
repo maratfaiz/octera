@@ -855,6 +855,7 @@ button.secondary:hover:not(:disabled) {
 
   body {
     background: #fff;
+    min-height: 0;
   }
 
   .no-print {
@@ -863,6 +864,10 @@ button.secondary:hover:not(:disabled) {
 
   .sidebar {
     display: none !important;
+  }
+
+  .app-shell {
+    min-height: 0 !important;
   }
 
   .print-header {
@@ -885,5 +890,11 @@ button.secondary:hover:not(:disabled) {
     box-shadow: none;
     border: 1px solid #ccc;
     break-inside: avoid;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+  }
+
+  .container {
+    padding: 0;
   }
 }
