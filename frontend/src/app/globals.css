@@ -879,3 +879,48 @@ button.secondary:hover:not(:disabled) {
   text-align: center;
   margin-top: 14px;
 }
+
+.print-header {
+  display: none;
+}
+
+@media print {
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body {
+    background: #fff;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .sidebar {
+    display: none !important;
+  }
+
+  .print-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .results-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .image-panels {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .card,
+  .inference-card {
+    box-shadow: none;
+    border: 1px solid #ccc;
+    break-inside: avoid;
+  }
+}

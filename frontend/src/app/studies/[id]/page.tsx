@@ -17,6 +17,7 @@ import {
   LayersMapIcon,
   ReportIcon,
   RulerIcon,
+  WaveLogoIcon,
 } from "@/components/icons";
 
 export default function StudyPage() {
@@ -70,8 +71,13 @@ export default function StudyPage() {
       <Sidebar />
       <div className="main-content">
         <div className="container" style={{ maxWidth: 1160 }}>
+          <div className="print-header">
+            <WaveLogoIcon />
+            <strong>OCTera</strong>
+          </div>
           <Link
             href="/history"
+            className="no-print"
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -94,7 +100,14 @@ export default function StudyPage() {
                 </div>
               )}
             </div>
-            {result && <div className="pill pill-amber">⬤ Предварительное заключение</div>}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {result && <div className="pill pill-amber">⬤ Предварительное заключение</div>}
+              {result && (
+                <button type="button" className="secondary no-print" onClick={() => window.print()}>
+                  Скачать PDF
+                </button>
+              )}
+            </div>
           </div>
           {error && (
             <div className="error">
