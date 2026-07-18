@@ -4,7 +4,17 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiError, MAX_UPLOAD_SIZE_MB, analysis, getToken, studies, validateUploadFile } from "@/lib/api";
 import { Sidebar } from "@/components/Sidebar";
-import { AlertZoneIcon, ImageIcon, UploadIcon } from "@/components/icons";
+import {
+  ActivityIcon,
+  AlertZoneIcon,
+  ArrowRightIcon,
+  CloudUploadIcon,
+  EyeIcon,
+  InfoIcon,
+  LayersMapIcon,
+  SparkleIcon,
+  UploadIcon,
+} from "@/components/icons";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -30,19 +40,29 @@ export default function DashboardPage() {
     return () => URL.revokeObjectURL(url);
   }, [file]);
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const selected = e.target.files?.[0] ?? null;
-    if (selected) {
-      const validationError = validateUploadFile(selected);
+  function selectFile(candidate: File | null): boolean {
+    if (candidate) {
+      const validationError = validateUploadFile(candidate);
       if (validationError) {
         setError(validationError);
         setFile(null);
-        e.target.value = "";
-        return;
+        return false;
       }
     }
     setError(null);
-    setFile(selected);
+    setFile(candidate);
+    return true;
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!selectFile(e.target.files?.[0] ?? null)) {
+      e.target.value = "";
+    }
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    selectFile(e.dataTransfer.files?.[0] ?? null);
   }
 
   async function handleUpload(e: React.FormEvent) {
@@ -81,9 +101,14 @@ export default function DashboardPage() {
 
           <form onSubmit={handleUpload} className="upload-card">
             <div className="upload-card-col">
-              <div className="card-title">Параметры исследования</div>
+              <p className="card-title">
+                <span className="card-title-icon">
+                  <EyeIcon />
+                </span>
+                Параметры исследования
+              </p>
               <label style={{ fontSize: 12, fontWeight: 600, color: "var(--ink-soft)", display: "block", marginBottom: 6 }}>
-                Глаз
+                Выберите глаз для анализа
               </label>
               <div className="eye-toggle">
                 <button
@@ -101,18 +126,30 @@ export default function DashboardPage() {
                   OS · левый
                 </button>
               </div>
+              <div className="report-banner" style={{ marginBottom: 0 }}>
+                <InfoIcon />
+                Убедитесь, что выбран правильный глаз перед загрузкой.
+              </div>
             </div>
 
             <div className="upload-card-col" style={{ display: "flex", flexDirection: "column" }}>
-              <div className="card-title">Снимок</div>
-              <div className="upload-dropzone">
+              <p className="card-title">
+                <span className="card-title-icon">
+                  <CloudUploadIcon />
+                </span>
+                Загрузите ОКТ-снимок
+              </p>
+              <div className="upload-dropzone" onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
                 {previewUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={previewUrl} alt="Предпросмотр снимка" style={{ maxWidth: "100%", maxHeight: 100, borderRadius: 8 }} />
                 ) : (
-                  <span className="upload-dropzone-icon">
-                    <ImageIcon width="2em" height="2em" />
-                  </span>
+                  <>
+                    <span className="upload-dropzone-icon">
+                      <CloudUploadIcon />
+                    </span>
+                    <span className="upload-dropzone-hint">Перетащите файл сюда или</span>
+                  </>
                 )}
                 <div className="file-input-trigger">
                   <label htmlFor="oct-file-upload">
@@ -152,19 +189,58 @@ export default function DashboardPage() {
 
           <div className="feature-grid">
             <div className="feature-card">
+              <div className="feature-card-icon">
+                <LayersMapIcon />
+              </div>
               <div className="feature-card-title">Сегментация слоёв</div>
               <div className="feature-card-body">Автоматическое измерение толщины слоёв сетчатки на снимке.</div>
+              <span className="feature-card-link">
+                <ArrowRightIcon />
+              </span>
             </div>
             <div className="feature-card">
+              <div className="feature-card-icon">
+                <AlertZoneIcon />
+              </div>
               <div className="feature-card-title">Карта аномалий</div>
               <div className="feature-card-body">Выделение гипорефлективных зон для визуальной проверки врачом.</div>
+              <span className="feature-card-link">
+                <ArrowRightIcon />
+              </span>
             </div>
             <div className="feature-card">
+              <div className="feature-card-icon">
+                <ActivityIcon />
+              </div>
               <div className="feature-card-title">Вероятность диагноза</div>
               <div className="feature-card-body">
                 Ранжированный список вероятных патологий с уровнем уверенности модели.
               </div>
+              <span className="feature-card-link">
+                <ArrowRightIcon />
+              </span>
             </div>
+          </div>
+
+          <div className="ai-banner">
+            <span className="ai-banner-icon">
+              <SparkleIcon />
+            </span>
+            <div>
+              <div className="ai-banner-title">Искусственный интеллект на службе офтальмологии</div>
+              <p className="ai-banner-body">
+                OCTera помогает врачам быстрее и точнее интерпретировать ОКТ-исследования и принимать обоснованные
+                клинические решения.
+              </p>
+            </div>
+            <svg className="ai-banner-wave" viewBox="0 0 220 90" fill="none" aria-hidden="true">
+              <path
+                d="M0 60 C 25 35, 45 80, 70 55 S 115 25, 140 50 S 195 75, 220 45"
+                stroke="currentColor"
+                strokeWidth={12}
+                strokeLinecap="round"
+              />
+            </svg>
           </div>
         </div>
       </div>

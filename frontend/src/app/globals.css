@@ -251,18 +251,13 @@ button.secondary:hover:not(:disabled) {
   font-size: 12px;
   font-weight: 700;
   padding: 7px 12px;
-  border-radius: 4px;
+  border-radius: 20px;
   border: 1px solid currentColor;
 }
 
 .pill-success {
   color: var(--success);
   background: var(--success-soft);
-}
-
-.pill-amber {
-  color: var(--amber);
-  background: var(--amber-soft);
 }
 
 .status-badge {
@@ -497,7 +492,20 @@ button.secondary:hover:not(:disabled) {
 }
 
 .upload-dropzone-icon {
-  color: var(--ink-faint);
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-dropzone-hint {
+  font-size: 13px;
+  color: var(--ink-soft);
 }
 
 .feature-grid {
@@ -510,16 +518,27 @@ button.secondary:hover:not(:disabled) {
 .feature-card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 16px;
+  border-radius: 14px;
+  padding: 18px;
+}
+
+.feature-card-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
 }
 
 .feature-card-title {
-  font-size: 11px;
+  font-size: 14.5px;
   font-weight: 700;
-  color: var(--ink-soft);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  color: var(--ink);
   margin-bottom: 6px;
 }
 
@@ -527,6 +546,63 @@ button.secondary:hover:not(:disabled) {
   font-size: 12.5px;
   color: var(--ink-soft);
   line-height: 1.5;
+}
+
+.feature-card-link {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--ink-faint);
+}
+
+.ai-banner {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 20px;
+  background: var(--accent-soft);
+  border: 1px solid #c3d8ff;
+  border-radius: 16px;
+}
+
+.ai-banner-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ai-banner-title {
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+.ai-banner-body {
+  font-size: 13px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  max-width: 520px;
+}
+
+.ai-banner-wave {
+  position: absolute;
+  right: 0;
+  bottom: -10px;
+  width: 220px;
+  height: auto;
+  color: rgba(11, 95, 255, 0.15);
+  pointer-events: none;
 }
 
 .file-input-trigger {

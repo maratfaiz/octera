@@ -185,3 +185,48 @@ export function UserIcon(props: IconProps) {
 export function ArrowLeftIcon(props: IconProps) {
   return base(<path d="M19 12H5M11 6l-6 6 6 6" />, props);
 }
+
+export function ArrowRightIcon(props: IconProps) {
+  return base(<path d="M5 12h14M13 6l6 6-6 6" />, props);
+}
+
+export function EyeIcon(props: IconProps) {
+  return base(
+    <>
+      <path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </>,
+    props,
+  );
+}
+
+export function InfoIcon(props: IconProps) {
+  return base(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.5" />
+      <circle cx="12" cy="8" r="0.15" fill="currentColor" stroke="currentColor" strokeWidth={1.4} />
+    </>,
+    props,
+  );
+}
+
+export function CloudUploadIcon(props: IconProps) {
+  return base(
+    <>
+      <path d="M7 18a4.5 4.5 0 0 1-1-8.9 5.5 5.5 0 0 1 10.7-2A4 4 0 0 1 17 18H7Z" />
+      <path d="M12 20v-7M9.5 15.5 12 13l2.5 2.5" />
+    </>,
+    props,
+  );
+}
+
+export function SparkleIcon(props: IconProps) {
+  return base(
+    <>
+      <path d="M12 3l1.6 4.8L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.2L12 3Z" />
+      <path d="M19 15l0.8 2.2L22 18l-2.2 0.8L19 21l-0.8-2.2L16 18l2.2-0.8L19 15Z" />
+    </>,
+    props,
+  );
+}
