@@ -481,6 +481,8 @@ def _multi_seed_worker_evaluate(
     `_multi_seed_evaluation` below -- see that function's docstring for why.
     """
     raw_images, labels, split_groups = _load_real_dataset(data_dir)
+    if not raw_images:
+        raise SystemExit(f"No images matched between OCT.csv and OCT/OCT*/*.jpg under {data_dir}")
     train_idx, test_idx = _group_aware_split(labels, split_groups, random_state=seed)
     train_images = [raw_images[i] for i in train_idx]
     train_labels = [labels[i] for i in train_idx]
@@ -769,6 +771,18 @@ def _run_select_phase(args: argparse.Namespace) -> dict:
     guarantee that is for the process holding it to actually exit rather than
     just idle while waiting on child subprocesses.
 
+    This raises the training-set size at which OOM recurs; it does not
+    eliminate the failure mode. select_best_model alone runs ~21 sequential
+    fits (6 candidates x 4 CV folds, plus the final fit) inside this one
+    process with no further isolation -- the same numpy/BLAS/libsvm memory-
+    retention behavior blamed for the multi-seed OOM applies here too, just
+    with more budget before it bites. A future augmentation stage stacked on
+    top of rotation+flip+brightness could plausibly push this phase's own
+    peak past whatever a single subprocess has available, at which point
+    isolating it further (splitting select_best_model's own candidate loop
+    across subprocesses, mirroring _multi_seed_evaluation) would be the next
+    round's fix, not a new problem.
+
     Returns a JSON-serializable dict of everything the orchestrator needs for
     the final model card. Does NOT save a checkpoint unless minority-oversample
     is active (a non-default experimental flag) -- in that case no later phase
@@ -891,11 +905,13 @@ def _run_select_phase(args: argparse.Namespace) -> dict:
             "will have null dme_threshold_analysis/dme_calibration_metrics fields as a result."
         )
 
-    shipped_on_full_dataset = False
     if args.minority_oversample > 1:
+        # No later phase refits on 100% of data when oversampling is active (the
+        # orchestrator's run_full_pipeline gate) -- this phase's single-split
+        # model IS the final artifact, so save it here rather than losing the
+        # fitted object when this process exits.
         model.save(args.out)
         print(f"Saved checkpoint to {args.out}")
-        shipped_on_full_dataset = False  # the caller won't run a full-dataset refit in this case
 
     return {
         "data_source": "real:OCT-AND-EYE-FUNDUS-DATASET",
@@ -914,7 +930,6 @@ def _run_select_phase(args: argparse.Namespace) -> dict:
         "confusion_matrix": confusion_matrix(y_test, preds, labels=CLASSES).tolist(),
         "dme_threshold_analysis": threshold_analysis,
         "dme_calibration_metrics": calibration_metrics,
-        "shipped_checkpoint_trained_on_full_dataset": shipped_on_full_dataset,
     }
 
 
@@ -933,6 +948,8 @@ def _run_final_refit_phase(args: argparse.Namespace) -> None:
     traded for the memory isolation that's the whole point of this split.
     """
     raw_images, labels, groups = _load_real_dataset(args.data_dir)
+    if not raw_images:
+        raise SystemExit(f"No images matched between OCT.csv and OCT/OCT*/*.jpg under {args.data_dir}")
     full_images, full_labels = raw_images, labels
     X_full = np.stack([extract_features(Image.fromarray(img)) for img in raw_images])
     y_full = np.array(labels)
@@ -964,8 +981,17 @@ def _run_final_refit_phase(args: argparse.Namespace) -> None:
 
 
 def _phase_subprocess_cmd(args: argparse.Namespace) -> list[str]:
-    """Common flags shared by every phase subprocess the orchestrator launches."""
-    cmd = [sys.executable, "-m", "app.ml.train", "--data-dir", args.data_dir]
+    """Common flags shared by every phase subprocess the orchestrator launches.
+
+    Includes --minority-oversample whenever it's non-default, even though
+    --phase final-refit ignores it (that phase never oversamples the full
+    dataset) -- harmless today because _run_real_training only ever launches
+    final-refit when minority_oversample == 1 (see run_full_pipeline below),
+    so the flag is never actually forwarded in that case. Noted here so a
+    future change to that gating doesn't silently start masking a real
+    oversample-vs-full-refit policy conflict.
+    """
+    cmd = [sys.executable, "-m", "app.ml.train", "--data-dir", args.data_dir, "--out", args.out]
     if args.no_rotation_augment:
         cmd.append("--no-rotation-augment")
     if args.no_flip_augment:
@@ -983,14 +1009,16 @@ def _run_real_training(args: argparse.Namespace) -> None:
     evaluation and the final-refit phase, each as its own fresh subprocess
     with live (uncaptured) output so progress still streams normally. This
     process itself never touches a feature matrix or a fitted model, so its
-    own memory stays trivial throughout -- the actual fix for the OOM kills
-    round 30 hit twice, see _run_select_phase's docstring.
+    own memory stays trivial throughout -- the fix for the OOM kills round 30
+    hit twice. See _run_select_phase's docstring for what this does and
+    doesn't guarantee: each phase's own peak memory is still unbounded, this
+    just stops phases from stacking on top of each other.
     """
-    with tempfile.NamedTemporaryFile(mode="r", suffix=".json", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
         select_output_path = tmp.name
     try:
         subprocess.run(
-            _phase_subprocess_cmd(args) + ["--phase", "select", "--phase-output", select_output_path, "--out", args.out],
+            _phase_subprocess_cmd(args) + ["--phase", "select", "--phase-output", select_output_path],
             check=True,
         )
         select_result = json.loads(Path(select_output_path).read_text())
@@ -1029,8 +1057,7 @@ def _run_real_training(args: argparse.Namespace) -> None:
         )
 
         subprocess.run(
-            _phase_subprocess_cmd(args)
-            + ["--phase", "final-refit", "--estimator-name", best_name, "--out", args.out],
+            _phase_subprocess_cmd(args) + ["--phase", "final-refit", "--estimator-name", best_name],
             check=True,
         )
         shipped_on_full_dataset = True
@@ -1127,6 +1154,19 @@ def main() -> None:
     parser.add_argument("--phase-output", type=str, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--estimator-name", type=str, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    # These internal subprocess-entry-point flags are always paired by their
+    # own caller (_multi_seed_evaluation, _run_real_training), but each pairs
+    # a cheap flag with an expensive phase -- load/augment/fit can run for
+    # minutes to hours before the missing partner flag would otherwise surface
+    # as a confusing KeyError/TypeError deep inside the phase. Fail fast
+    # instead, before any of that work starts.
+    if args.multi_seed_worker_seed is not None and args.multi_seed_worker_estimator is None:
+        parser.error("--multi-seed-worker-seed requires --multi-seed-worker-estimator")
+    if args.phase == "select" and args.phase_output is None:
+        parser.error("--phase select requires --phase-output")
+    if args.phase == "final-refit" and args.estimator_name is None:
+        parser.error("--phase final-refit requires --estimator-name")
 
     if args.multi_seed_worker_seed is not None:
         # Isolated single-seed evaluation, invoked as a fresh subprocess by
