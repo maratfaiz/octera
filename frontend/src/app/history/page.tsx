@@ -7,7 +7,7 @@ import { ApiError, analysis, fetchImageObjectUrl, getToken, studies } from "@/li
 import type { AnalysisSummary, Study } from "@/lib/types";
 import { Sidebar } from "@/components/Sidebar";
 import { TrendChart } from "@/components/TrendChart";
-import { ActivityIcon, AlertZoneIcon, GaugeIcon, RulerIcon } from "@/components/icons";
+import { AlertZoneIcon, RulerIcon } from "@/components/icons";
 import { LAYER_LABELS_RU } from "@/lib/labels";
 
 const STATUS_LABELS: Record<Study["status"], string> = {
@@ -91,11 +91,6 @@ export default function HistoryPage() {
   );
   const trendHistory = availableEyes.length > 1 ? history.filter((h) => h.eye === selectedEye) : history;
 
-  const qualityPoints = trendHistory.map((h) => ({ date: shortDate(h.created_at), value: h.quality_score }));
-  const confidencePoints = trendHistory
-    .filter((h) => h.top_diagnosis)
-    .map((h) => ({ date: shortDate(h.created_at), value: h.top_diagnosis!.probability }));
-
   // Each layer gets its own min/max-normalized 0..1 series -- raw thickness values
   // live on very different absolute scales per layer (a few microns vs. over a
   // hundred), so a shared scale would flatten the thinner layers' trends to
@@ -154,43 +149,6 @@ export default function HistoryPage() {
             <p style={{ color: "var(--ink-soft)", fontSize: 13, marginBottom: 20 }}>
               Недостаточно снимков этого глаза для графика динамики — нужно хотя бы два.
             </p>
-          )}
-
-          {!loading && trendHistory.length >= 2 && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-              <div className="card" style={{ marginBottom: 0 }}>
-                <p className="card-title">
-                  <span className="card-title-icon">
-                    <GaugeIcon />
-                  </span>
-                  Качество снимков
-                </p>
-                <p className="mono" style={{ fontSize: 28, fontWeight: 800, margin: "4px 0 12px" }}>
-                  {(qualityPoints[qualityPoints.length - 1].value * 100).toFixed(0)}
-                  <span style={{ fontSize: 16, color: "var(--ink-soft)" }}>%</span>
-                </p>
-                <TrendChart points={qualityPoints} color="var(--accent)" />
-              </div>
-              <div className="card" style={{ marginBottom: 0 }}>
-                <p className="card-title">
-                  <span className="card-title-icon">
-                    <ActivityIcon />
-                  </span>
-                  Уверенность диагностики
-                </p>
-                <p className="mono" style={{ fontSize: 28, fontWeight: 800, margin: "4px 0 12px" }}>
-                  {confidencePoints.length > 0 ? (
-                    <>
-                      {(confidencePoints[confidencePoints.length - 1].value * 100).toFixed(1)}
-                      <span style={{ fontSize: 16, color: "var(--ink-soft)" }}>%</span>
-                    </>
-                  ) : (
-                    "—"
-                  )}
-                </p>
-                <TrendChart points={confidencePoints} color="var(--success)" />
-              </div>
-            </div>
           )}
 
           {!loading && trendHistory.length >= 2 && layerTrends.length > 0 && (
