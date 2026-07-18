@@ -56,6 +56,7 @@ from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 
 from app.ml.augmentation import augment as augment_image
+from app.ml.augmentation import random_brightness_contrast
 from app.ml.augmentation import rotate as rotate_image
 from app.ml.features import extract_features
 from app.ml.model import CLASSES, DEFAULT_CHECKPOINT_PATH, OCTClassifier
@@ -309,6 +310,46 @@ def _flip_augment(
     return out_images, out_labels, out_groups
 
 
+def _brightness_contrast_augment(
+    images: list[np.ndarray],
+    labels: list[str],
+    groups: list[str] | None = None,
+    seed: int = 42,
+) -> tuple[list[np.ndarray], list[str], list[str] | None]:
+    """Adds one randomized brightness/contrast-perturbed copy of every image
+    (reusing app.ml.augmentation.random_brightness_contrast, already used for
+    synthetic-data augmentation and --minority-oversample, but never before
+    tried in the real-data training path).
+
+    Real uploads plausibly vary in exposure/glare as much as they vary in
+    rotation -- the same "phone photo of a screen/printout" scenario rounds
+    19/23 built rotation robustness for. Round 30 tested this on top of the
+    current recipe (rotation + flip, round 29) across 5 split seeds: accuracy
+    improved 0.951->0.958 mean (4/5 seeds), DME precision improved
+    0.803->0.853 mean (4/5 seeds, the largest gain of any single-round
+    augmentation change tried so far), and DME recall stayed flat within
+    noise (0.856->0.852 mean; two seeds dipped ~2.5-2.6 points, one gained 2.9,
+    two were unchanged) -- a cleaner result than round 23's own accepted
+    rotation-augmentation trade-off (which cost ~4 points of recall on
+    average for its robustness gain). Ships enabled by default.
+
+    A fixed RNG seed (independent of the split seed) makes the shipped
+    checkpoint's exact augmented pixels reproducible run to run, matching
+    _oversample_minority's use of a fixed seed for the same reason. Each
+    perturbed copy keeps its source's group for the same patient-leakage
+    reason as every other augmentation stage above.
+    """
+    rng = np.random.default_rng(seed)
+    out_images, out_labels = list(images), list(labels)
+    out_groups = list(groups) if groups is not None else None
+    for idx, (img, label) in enumerate(zip(images, labels)):
+        out_images.append(random_brightness_contrast(img, rng))
+        out_labels.append(label)
+        if out_groups is not None:
+            out_groups.append(groups[idx])
+    return out_images, out_labels, out_groups
+
+
 def _apply_augmentation_stage(
     images: list[np.ndarray],
     labels: list[str],
@@ -432,6 +473,7 @@ def _multi_seed_evaluation(
     seeds: tuple[int, ...] = (42, 7, 99, 123, 2024),
     rotation_augment: bool = False,
     flip_augment: bool = False,
+    brightness_augment: bool = False,
 ) -> dict:
     """Refits the winning model type across several train/test split seeds and
     reports mean/std, instead of trusting the single split's numbers at face
@@ -446,12 +488,14 @@ def _multi_seed_evaluation(
     produces the shipped checkpoint -- round 23 originally left this
     characterization describing the pre-round-23 recipe even after the
     augmented recipe shipped, which would have made this field describe a
-    model no longer in production. `flip_augment` (round 29) does the same
-    for mirrored copies, applied on top of rotation augmentation. Costs 5x
-    the feature extraction of the non-augmented path (each seed's augmented
-    training images are re-extracted from scratch, since the augmented set
-    differs per seed), but this function is already documented as a
-    characterization exercise, not a hot path.
+    model no longer in production. `flip_augment` (round 29) and
+    `brightness_augment` (round 30) do the same for their respective stages,
+    applied in the same order as the real training pipeline (rotation, then
+    flip, then brightness/contrast). Costs 5x the feature extraction of the
+    non-augmented path (each seed's augmented training images are
+    re-extracted from scratch, since the augmented set differs per seed), but
+    this function is already documented as a characterization exercise, not a
+    hot path.
     """
     y_all = np.array(labels)
 
@@ -470,6 +514,8 @@ def _multi_seed_evaluation(
             train_images, train_labels, _ = _rotation_augment(train_images, train_labels)
         if flip_augment:
             train_images, train_labels, _ = _flip_augment(train_images, train_labels)
+        if brightness_augment:
+            train_images, train_labels, _ = _brightness_contrast_augment(train_images, train_labels)
 
         X_train_seed = np.stack([extract_features(Image.fromarray(img)) for img in train_images])
         y_train_seed = np.array(train_labels)
@@ -495,6 +541,7 @@ def _multi_seed_evaluation(
         "seeds": list(seeds),
         "rotation_augment": rotation_augment,
         "flip_augment": flip_augment,
+        "brightness_augment": brightness_augment,
         "test_accuracy": _summary(accuracies),
         "dme_precision": _summary(dme_precisions),
         "dme_recall": _summary(dme_recalls),
@@ -564,6 +611,16 @@ def main() -> None:
         "see README round 26/29. Measured across 5 split seeds against the current shipped recipe: DME "
         "recall improved in 5/5 seeds, accuracy in 4/5, precision in 4/5, so it ships enabled by default; "
         "this flag reverts to the round 23-28 baseline behavior.",
+    )
+    parser.add_argument(
+        "--no-brightness-augment",
+        action="store_true",
+        help="Disable brightness/contrast-augmented training (round 30, real data only): by default, each "
+        "(rotation+flip-augmented) real training image is supplemented with a randomized brightness/contrast "
+        "perturbed copy -- see README round 30. Measured across 5 split seeds against the current shipped "
+        "recipe: accuracy improved in 4/5 seeds, DME precision in 4/5 (the largest single-round precision "
+        "gain so far), DME recall stayed flat within noise, so it ships enabled by default; this flag "
+        "reverts to the round 29 baseline behavior.",
     )
     parser.add_argument("--out", type=str, default=str(DEFAULT_CHECKPOINT_PATH))
     args = parser.parse_args()
@@ -642,6 +699,21 @@ def main() -> None:
         )
     n_train_after_flip_augment = len(images_train)
 
+    # Round 30: brightness/contrast-augmented training (see
+    # _brightness_contrast_augment), applied on top of rotation+flip -- same
+    # before-selection placement, same reasoning.
+    brightness_augmented = data_source != "synthetic" and not args.no_brightness_augment
+    if brightness_augmented:
+        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
+            images_train,
+            labels_train,
+            groups_train,
+            X_train,
+            _brightness_contrast_augment,
+            "Brightness/contrast-augmented training split (round 30)",
+        )
+    n_train_after_brightness_augment = len(images_train)
+
     print("Selecting best model via cross-validation on the training split:")
     best_name, best_estimator, cv_scores = select_best_model(X_train, y_train, groups=groups_train)
     print(f"Selected: {best_name} (cv balanced accuracy = {cv_scores[best_name]:.3f})")
@@ -673,6 +745,7 @@ def main() -> None:
             lambda: clone(best_estimator),
             rotation_augment=rotation_augmented,
             flip_augment=flip_augmented,
+            brightness_augment=brightness_augmented,
         )
         print(
             f"  test accuracy: {multi_seed_metrics['test_accuracy']['mean']:.3f} "
@@ -754,6 +827,15 @@ def main() -> None:
             full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
                 full_images, full_labels, None, X_full, _flip_augment, "Flip-augmented full dataset for final refit"
             )
+        if brightness_augmented:
+            full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
+                full_images,
+                full_labels,
+                None,
+                X_full,
+                _brightness_contrast_augment,
+                "Brightness/contrast-augmented full dataset for final refit",
+            )
         model = OCTClassifier(clone(best_estimator))
         model.fit(X_full, y_full)
         shipped_on_full_dataset = True
@@ -771,6 +853,8 @@ def main() -> None:
         "n_train_samples_after_rotation_augment": n_train_after_rotation_augment,
         "flip_augment_enabled": flip_augmented,
         "n_train_samples_after_flip_augment": n_train_after_flip_augment,
+        "brightness_augment_enabled": brightness_augmented,
+        "n_train_samples_after_brightness_augment": n_train_after_brightness_augment,
         "classes": CLASSES,
         "selected_model": best_name,
         "cv_balanced_accuracy_by_model": cv_scores,
