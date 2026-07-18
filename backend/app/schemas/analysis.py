@@ -31,5 +31,9 @@ class AnalysisSummary(BaseModel):
     quality_score: float
     top_diagnosis: Diagnosis | None
     layer_thickness: dict[str, float]
+    # From the joined Study, not AnalysisResult itself -- lets clients split
+    # trend charts by eye (OD/OS) instead of mixing two different eyes'
+    # measurements into one line.
+    eye: str | None
 
     model_config = {"from_attributes": True}

@@ -53,12 +53,15 @@ function HistoryThumb({ studyId }: { studyId: string }) {
   );
 }
 
+const EYE_ORDER: Record<string, number> = { OD: 0, OS: 1 };
+
 export default function HistoryPage() {
   const router = useRouter();
   const [items, setItems] = useState<Study[]>([]);
   const [history, setHistory] = useState<AnalysisSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedEye, setSelectedEye] = useState<string | null>(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -69,13 +72,27 @@ export default function HistoryPage() {
       .then(([studyList, historyList]) => {
         setItems(studyList);
         setHistory(historyList);
+        // Default to the most recent study's eye so trends open on "how is my
+        // latest scan trending" rather than a merged line across both eyes.
+        setSelectedEye(historyList[historyList.length - 1]?.eye ?? null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Не удалось загрузить историю"))
       .finally(() => setLoading(false));
   }, [router]);
 
-  const qualityPoints = history.map((h) => ({ date: shortDate(h.created_at), value: h.quality_score }));
-  const confidencePoints = history
+  // Trend charts plot one value per study against a shared x-axis by index, not
+  // by eye -- OD and OS are two different biological measurements, so a history
+  // mixing both would show swings that are really just alternating eyes, not
+  // real progression. Only offer the OD/OS split once a patient actually has
+  // both on file; single-eye patients (the common case) see the trends
+  // unfiltered, exactly as before this feature existed.
+  const availableEyes = Array.from(new Set(history.map((h) => h.eye).filter((e): e is string => e !== null))).sort(
+    (a, b) => (EYE_ORDER[a] ?? 99) - (EYE_ORDER[b] ?? 99)
+  );
+  const trendHistory = availableEyes.length > 1 ? history.filter((h) => h.eye === selectedEye) : history;
+
+  const qualityPoints = trendHistory.map((h) => ({ date: shortDate(h.created_at), value: h.quality_score }));
+  const confidencePoints = trendHistory
     .filter((h) => h.top_diagnosis)
     .map((h) => ({ date: shortDate(h.created_at), value: h.top_diagnosis!.probability }));
 
@@ -89,9 +106,9 @@ export default function HistoryPage() {
   // layer_thickness, see run_analysis_pipeline) -- if that happens to be a
   // patient's most recent study, "latest" must not silently fall back to an
   // older study's value with no indication it isn't current.
-  const mostRecentStudy = history[history.length - 1];
+  const mostRecentStudy = trendHistory[trendHistory.length - 1];
   const layerTrends = Object.keys(LAYER_LABELS_RU).flatMap((layerKey) => {
-    const raw = history
+    const raw = trendHistory
       .filter((h) => layerKey in h.layer_thickness)
       .map((h) => ({ date: shortDate(h.created_at), value: h.layer_thickness[layerKey] }));
     if (raw.length === 0) return [];
@@ -118,7 +135,28 @@ export default function HistoryPage() {
             </div>
           )}
 
-          {!loading && history.length >= 2 && (
+          {!loading && availableEyes.length > 1 && (
+            <div className="eye-toggle" style={{ maxWidth: 280 }}>
+              {availableEyes.map((eyeOption) => (
+                <button
+                  key={eyeOption}
+                  type="button"
+                  className={`eye-toggle-option ${selectedEye === eyeOption ? "active" : ""}`}
+                  onClick={() => setSelectedEye(eyeOption)}
+                >
+                  {eyeOption === "OD" ? "OD · правый" : eyeOption === "OS" ? "OS · левый" : eyeOption}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {!loading && availableEyes.length > 1 && trendHistory.length < 2 && (
+            <p style={{ color: "var(--ink-soft)", fontSize: 13, marginBottom: 20 }}>
+              Недостаточно снимков этого глаза для графика динамики — нужно хотя бы два.
+            </p>
+          )}
+
+          {!loading && trendHistory.length >= 2 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
               <div className="card" style={{ marginBottom: 0 }}>
                 <p className="card-title">
@@ -155,7 +193,7 @@ export default function HistoryPage() {
             </div>
           )}
 
-          {!loading && history.length >= 2 && layerTrends.length > 0 && (
+          {!loading && trendHistory.length >= 2 && layerTrends.length > 0 && (
             <div className="card">
               <p className="card-title">
                 <span className="card-title-icon">

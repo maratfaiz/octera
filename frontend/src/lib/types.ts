@@ -40,4 +40,5 @@ export interface AnalysisSummary {
   quality_score: number;
   top_diagnosis: Diagnosis | null;
   layer_thickness: Record<string, number>;
+  eye: string | null;
 }

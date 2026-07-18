@@ -83,6 +83,9 @@ def test_analysis_history_lists_own_results_only(client):
     assert len(history) == 1
     assert history[0]["study_id"] == study_id
     assert "top_diagnosis" in history[0]
+    # _upload_test_study always uploads with ?eye=OD -- lets the frontend split
+    # trend charts by eye instead of mixing OD/OS measurements into one line.
+    assert history[0]["eye"] == "OD"
 
     resp_b = client.get("/api/v1/analysis", headers=headers_b)
     assert resp_b.status_code == 200

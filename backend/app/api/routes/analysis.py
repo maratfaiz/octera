@@ -29,7 +29,7 @@ def list_analysis_history(
     patient: Patient = Depends(get_current_patient),
 ) -> list[AnalysisSummary]:
     results = (
-        db.query(AnalysisResult)
+        db.query(AnalysisResult, Study.eye)
         .join(Study, Study.id == AnalysisResult.study_id)
         .filter(Study.patient_id == patient.id)
         .order_by(AnalysisResult.created_at.asc())
@@ -44,8 +44,9 @@ def list_analysis_history(
             # so a study flagged in its detail report isn't shown as unremarkable here.
             top_diagnosis=resolve_flagged_diagnosis(r.diagnoses),
             layer_thickness=r.layer_thickness,
+            eye=eye,
         )
-        for r in results
+        for r, eye in results
     ]
 
 
