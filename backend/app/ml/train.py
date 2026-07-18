@@ -30,6 +30,8 @@ import argparse
 import csv
 import hashlib
 import json
+import subprocess
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -465,11 +467,53 @@ def _cv_threshold_analysis(
     return result
 
 
+def _multi_seed_worker_evaluate(
+    data_dir: str,
+    seed: int,
+    estimator_name: str,
+    rotation_augment: bool,
+    flip_augment: bool,
+    brightness_augment: bool,
+) -> dict:
+    """Evaluates ONE split seed: load, split, augment, extract, fit, grade
+    against the held-out fold. Called from a fresh subprocess per seed by
+    `_multi_seed_evaluation` below -- see that function's docstring for why.
+    """
+    raw_images, labels, split_groups = _load_real_dataset(data_dir)
+    train_idx, test_idx = _group_aware_split(labels, split_groups, random_state=seed)
+    train_images = [raw_images[i] for i in train_idx]
+    train_labels = [labels[i] for i in train_idx]
+    if rotation_augment:
+        train_images, train_labels, _ = _rotation_augment(train_images, train_labels)
+    if flip_augment:
+        train_images, train_labels, _ = _flip_augment(train_images, train_labels)
+    if brightness_augment:
+        train_images, train_labels, _ = _brightness_contrast_augment(train_images, train_labels)
+
+    X_train_seed = np.stack([extract_features(Image.fromarray(img)) for img in train_images])
+    y_train_seed = np.array(train_labels)
+    X_test_seed = np.stack([extract_features(Image.fromarray(raw_images[i])) for i in test_idx])
+    y_all = np.array(labels)
+
+    model = _candidate_estimators()[estimator_name]
+    model.fit(X_train_seed, y_train_seed)
+    preds = model.predict(X_test_seed)
+    rep = classification_report(y_all[test_idx], preds, output_dict=True, zero_division=0)
+    result: dict = {"seed": seed, "accuracy": rep["accuracy"]}
+    # A grouped split can, on this small dataset, draw a test fold with zero true
+    # DME cases -- "DME" key is then absent from rep entirely. That's different
+    # from the model genuinely scoring 0 precision/recall on a fold that DID have
+    # DME cases; silently defaulting both to 0.0 would understate the real mean/std
+    # by mixing in seeds that had nothing to score. The caller excludes these seeds.
+    if "DME" in rep:
+        result["dme_precision"] = rep["DME"]["precision"]
+        result["dme_recall"] = rep["DME"]["recall"]
+    return result
+
+
 def _multi_seed_evaluation(
-    raw_images: list[np.ndarray],
-    labels: list[str],
-    split_groups: list[str],
-    estimator_factory,
+    data_dir: str,
+    estimator_name: str,
     seeds: tuple[int, ...] = (42, 7, 99, 123, 2024),
     rotation_augment: bool = False,
     flip_augment: bool = False,
@@ -491,13 +535,22 @@ def _multi_seed_evaluation(
     model no longer in production. `flip_augment` (round 29) and
     `brightness_augment` (round 30) do the same for their respective stages,
     applied in the same order as the real training pipeline (rotation, then
-    flip, then brightness/contrast). Costs 5x the feature extraction of the
-    non-augmented path (each seed's augmented training images are
-    re-extracted from scratch, since the augmented set differs per seed), but
-    this function is already documented as a characterization exercise, not a
-    hot path.
+    flip, then brightness/contrast).
+
+    Round 30 found this function's own 5-seed loop -- stacked on top of an
+    already-large select_best_model phase within the same process -- was the
+    proven cause of two separate OOM kills once the augmented training set
+    tripled in size (rotation+flip+brightness, ~17500 images): numpy/BLAS/
+    libsvm don't reliably return freed memory to the OS between repeated
+    large fits in one long-running process, so RSS climbs seed over seed
+    until the kernel kills it. Each seed now runs `_multi_seed_worker_evaluate`
+    in its own fresh subprocess (via `python -m app.ml.train
+    --multi-seed-worker-seed N`) instead of in-process, so the OS fully
+    reclaims memory between seeds -- the same fix already validated for this
+    round's throwaway experiment script. Costs re-loading the dataset from
+    disk per seed (a few seconds, not the bottleneck) and 5x the feature
+    extraction of the non-augmented path, same as before.
     """
-    y_all = np.array(labels)
 
     def _summary(values: list[float]) -> dict:
         return {"mean": float(np.mean(values)), "std": float(np.std(values)), "values": [float(v) for v in values]}
@@ -507,33 +560,31 @@ def _multi_seed_evaluation(
     dme_recalls: list[float] = []
     skipped_seeds: list[int] = []
     for seed in seeds:
-        train_idx, test_idx = _group_aware_split(labels, split_groups, random_state=seed)
-        train_images = [raw_images[i] for i in train_idx]
-        train_labels = [labels[i] for i in train_idx]
-        if rotation_augment:
-            train_images, train_labels, _ = _rotation_augment(train_images, train_labels)
-        if flip_augment:
-            train_images, train_labels, _ = _flip_augment(train_images, train_labels)
-        if brightness_augment:
-            train_images, train_labels, _ = _brightness_contrast_augment(train_images, train_labels)
-
-        X_train_seed = np.stack([extract_features(Image.fromarray(img)) for img in train_images])
-        y_train_seed = np.array(train_labels)
-        X_test_seed = np.stack([extract_features(Image.fromarray(raw_images[i])) for i in test_idx])
-
-        model = estimator_factory()
-        model.fit(X_train_seed, y_train_seed)
-        preds = model.predict(X_test_seed)
-        rep = classification_report(y_all[test_idx], preds, output_dict=True, zero_division=0)
-        accuracies.append(rep["accuracy"])
-        # A grouped split can, on this small dataset, draw a test fold with zero true
-        # DME cases -- "DME" key is then absent from rep entirely. That's different
-        # from the model genuinely scoring 0 precision/recall on a fold that DID have
-        # DME cases; silently defaulting both to 0.0 would understate the real mean/std
-        # by mixing in seeds that had nothing to score. Exclude those seeds instead.
-        if "DME" in rep:
-            dme_precisions.append(rep["DME"]["precision"])
-            dme_recalls.append(rep["DME"]["recall"])
+        cmd = [
+            sys.executable,
+            "-m",
+            "app.ml.train",
+            "--data-dir",
+            data_dir,
+            "--multi-seed-worker-seed",
+            str(seed),
+            "--multi-seed-worker-estimator",
+            estimator_name,
+        ]
+        if not rotation_augment:
+            cmd.append("--no-rotation-augment")
+        if not flip_augment:
+            cmd.append("--no-flip-augment")
+        if not brightness_augment:
+            cmd.append("--no-brightness-augment")
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # The worker prints exactly one JSON line (as its last stdout line);
+        # sklearn/joblib warnings some environments emit go to stderr, not stdout.
+        result = json.loads(proc.stdout.strip().splitlines()[-1])
+        accuracies.append(result["accuracy"])
+        if "dme_precision" in result:
+            dme_precisions.append(result["dme_precision"])
+            dme_recalls.append(result["dme_recall"])
         else:
             skipped_seeds.append(seed)
 
@@ -623,7 +674,29 @@ def main() -> None:
         "reverts to the round 29 baseline behavior.",
     )
     parser.add_argument("--out", type=str, default=str(DEFAULT_CHECKPOINT_PATH))
+    parser.add_argument(
+        "--multi-seed-worker-seed",
+        type=int,
+        default=None,
+        help=argparse.SUPPRESS,  # internal: subprocess entry point for _multi_seed_evaluation, see round 30
+    )
+    parser.add_argument("--multi-seed-worker-estimator", type=str, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+
+    if args.multi_seed_worker_seed is not None:
+        # Isolated single-seed evaluation, invoked as a fresh subprocess by
+        # _multi_seed_evaluation -- print one JSON line and exit before any of
+        # the normal training flow below runs.
+        result = _multi_seed_worker_evaluate(
+            args.data_dir,
+            args.multi_seed_worker_seed,
+            args.multi_seed_worker_estimator,
+            rotation_augment=not args.no_rotation_augment,
+            flip_augment=not args.no_flip_augment,
+            brightness_augment=not args.no_brightness_augment,
+        )
+        print(json.dumps(result))
+        return
 
     groups: list[str] | None
     if args.data_dir:
@@ -739,10 +812,8 @@ def main() -> None:
     if X_all is not None:
         print("Evaluating across multiple train/test splits (round 15) to characterize typical performance:")
         multi_seed_metrics = _multi_seed_evaluation(
-            raw_images,
-            labels,
-            split_groups,
-            lambda: clone(best_estimator),
+            args.data_dir,
+            best_name,
             rotation_augment=rotation_augmented,
             flip_augment=flip_augmented,
             brightness_augment=brightness_augmented,
