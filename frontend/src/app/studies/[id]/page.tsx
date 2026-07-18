@@ -101,7 +101,7 @@ export default function StudyPage() {
               )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {result && <div className="pill pill-amber">⬤ Предварительное заключение</div>}
+              {result && <div className="pill pill-amber">Предварительное заключение</div>}
               {result && (
                 <button type="button" className="secondary no-print" onClick={() => window.print()}>
                   Скачать PDF
@@ -232,20 +232,21 @@ export default function StudyPage() {
 
             <div>
               {result && (
-                <div className="card quality-ring-card">
-                  <p className="card-title" style={{ justifyContent: "center" }}>
+                <div className="card">
+                  <p className="card-title">
                     <span className="card-title-icon">
                       <GaugeIcon />
                     </span>
                     Качество изображения
                   </p>
-                  <div
-                    className="quality-ring"
-                    style={{
-                      background: `conic-gradient(var(--accent) ${result.quality_score * 100}%, var(--track) 0)`,
-                    }}
-                  >
-                    <div className="quality-ring-inner">{(result.quality_score * 100).toFixed(0)}%</div>
+                  <div className="bar-row">
+                    <div className="bar-row-labels">
+                      <span>Оценка качества</span>
+                      <span>{(result.quality_score * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="diagnosis-bar">
+                      <div className="diagnosis-bar-fill" style={{ width: `${result.quality_score * 100}%` }} />
+                    </div>
                   </div>
                   {result.quality_issues.length > 0 && (
                     <p style={{ color: "var(--ink-soft)", fontSize: 12, marginTop: 12, marginBottom: 0 }}>
