@@ -44,6 +44,20 @@ export function PlusIcon(props: IconProps) {
   return base(<path d="M12 5v14M5 12h14" />, props);
 }
 
+export function MenuIcon(props: IconProps) {
+  return base(<path d="M4 7h16M4 12h16M4 17h16" />, props);
+}
+
+export function HomeIcon(props: IconProps) {
+  return base(
+    <>
+      <path d="M4 11l8-7 8 7" />
+      <path d="M6 9.5V20a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9.5" />
+    </>,
+    props,
+  );
+}
+
 export function ClockIcon(props: IconProps) {
   return base(
     <>

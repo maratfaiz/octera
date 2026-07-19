@@ -827,6 +827,7 @@ button.secondary:hover:not(:disabled) {
   font-weight: 700;
   text-align: right;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {
@@ -864,41 +865,122 @@ button.secondary:hover:not(:disabled) {
   }
 }
 
+.mobile-topbar,
+.mobile-menu-panel,
+.mobile-tabbar {
+  display: none;
+}
+
 @media (max-width: 720px) {
   .app-shell {
     flex-direction: column;
   }
 
   .sidebar {
-    width: 100%;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px 20px;
-    padding: 12px 16px;
-    border-right: none;
-    border-bottom: 1px solid var(--line);
+    display: none;
   }
 
-  .sidebar-logo {
-    padding: 0;
-  }
-
-  .sidebar-nav {
-    flex-direction: row;
-    flex: 1 1 auto;
-    padding: 0;
-  }
-
-  .sidebar-footer {
-    border-top: none;
-    margin-top: 0;
-    padding: 0;
-    flex: 1 1 100%;
+  .mobile-topbar {
     display: flex;
-    flex-direction: row;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
+    background: var(--sidebar-bg);
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--sidebar-border);
+  }
+
+  .mobile-topbar .sidebar-logo {
+    padding: 0;
+  }
+
+  .mobile-menu-toggle {
+    background: none;
+    border: none;
+    box-shadow: none;
+    color: var(--sidebar-text);
+    font-size: 22px;
+    padding: 4px;
+    display: flex;
+  }
+
+  .mobile-menu-panel {
+    display: block;
+    background: var(--sidebar-bg);
+    padding: 4px 16px 16px;
+    border-bottom: 1px solid var(--sidebar-border);
+  }
+
+  .mobile-menu-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 14px;
+  }
+
+  .mobile-tabbar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+    z-index: 20;
+  }
+
+  .mobile-tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ink-faint);
+    background: none;
+    border: none;
+    box-shadow: none;
+    padding: 4px;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .mobile-tab svg {
+    font-size: 20px;
+  }
+
+  .mobile-tab.active {
+    color: var(--accent);
+  }
+
+  .main-content {
+    padding-bottom: 76px;
+  }
+
+  .feature-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .feature-card-icon {
+    margin-bottom: 0;
+    flex-shrink: 0;
+  }
+
+  .feature-card-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .feature-card-link {
+    margin-top: 0;
+    flex-shrink: 0;
+  }
+
+  .page-header-row {
+    flex-wrap: wrap;
   }
 }
 

@@ -192,8 +192,10 @@ export default function DashboardPage() {
               <div className="feature-card-icon">
                 <LayersMapIcon />
               </div>
-              <div className="feature-card-title">Сегментация слоёв</div>
-              <div className="feature-card-body">Автоматическое измерение толщины слоёв сетчатки на снимке.</div>
+              <div className="feature-card-text">
+                <div className="feature-card-title">Сегментация слоёв</div>
+                <div className="feature-card-body">Автоматическое измерение толщины слоёв сетчатки на снимке.</div>
+              </div>
               <span className="feature-card-link">
                 <ArrowRightIcon />
               </span>
@@ -202,8 +204,10 @@ export default function DashboardPage() {
               <div className="feature-card-icon">
                 <AlertZoneIcon />
               </div>
-              <div className="feature-card-title">Карта аномалий</div>
-              <div className="feature-card-body">Выделение гипорефлективных зон для визуальной проверки врачом.</div>
+              <div className="feature-card-text">
+                <div className="feature-card-title">Карта аномалий</div>
+                <div className="feature-card-body">Выделение гипорефлективных зон для визуальной проверки врачом.</div>
+              </div>
               <span className="feature-card-link">
                 <ArrowRightIcon />
               </span>
@@ -212,9 +216,11 @@ export default function DashboardPage() {
               <div className="feature-card-icon">
                 <ActivityIcon />
               </div>
-              <div className="feature-card-title">Вероятность диагноза</div>
-              <div className="feature-card-body">
-                Ранжированный список вероятных патологий с уровнем уверенности модели.
+              <div className="feature-card-text">
+                <div className="feature-card-title">Вероятность диагноза</div>
+                <div className="feature-card-body">
+                  Ранжированный список вероятных патологий с уровнем уверенности модели.
+                </div>
               </div>
               <span className="feature-card-link">
                 <ArrowRightIcon />
