@@ -20,6 +20,14 @@ export interface Diagnosis {
   probability: number;
 }
 
+export interface PathologyFinding {
+  key: string;
+  label_ru: string;
+  color: [number, number, number];
+  detected: boolean;
+  zone_count: number;
+}
+
 export interface AnalysisResult {
   id: string;
   study_id: string;
@@ -28,7 +36,7 @@ export interface AnalysisResult {
   segmentation_map_path: string | null;
   layer_thickness: Record<string, number>;
   pathology_map_path: string | null;
-  pathology_zone_count: number;
+  pathology_findings: PathologyFinding[];
   diagnoses: Diagnosis[];
   report_text: string;
   created_at: string;

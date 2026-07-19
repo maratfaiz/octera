@@ -9,6 +9,14 @@ class Diagnosis(BaseModel):
     probability: float
 
 
+class PathologyFinding(BaseModel):
+    key: str
+    label_ru: str
+    color: tuple[int, int, int]
+    detected: bool
+    zone_count: int
+
+
 class AnalysisResultRead(BaseModel):
     id: str
     study_id: str
@@ -17,7 +25,7 @@ class AnalysisResultRead(BaseModel):
     segmentation_map_path: str | None
     layer_thickness: dict[str, float]
     pathology_map_path: str | None
-    pathology_zone_count: int
+    pathology_findings: list[PathologyFinding]
     diagnoses: list[Diagnosis]
     report_text: str
     created_at: datetime

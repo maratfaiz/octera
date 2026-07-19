@@ -3,7 +3,9 @@ from PIL import Image
 
 from app.services.segmentation import (
     LAYERS,
+    PATHOLOGY_LABELS_RU,
     _detect_fovea_column,
+    _detect_pathology_findings,
     _detect_pathology_zones,
     _draw_layer_overlay,
     _track_boundaries,
@@ -69,9 +71,50 @@ def test_pathology_map_is_generated_alongside_segmentation(tmp_path):
 
     result = segment_layers(str(path))
 
-    assert result.pathology_zone_count >= 0
+    assert {f.key for f in result.pathology_findings} == set(PATHOLOGY_LABELS_RU)
+    assert all(f.zone_count >= 0 for f in result.pathology_findings)
     assert (tmp_path / "flat_pathology.png").exists()
     assert result.pathology_map_path == str(tmp_path / "flat_pathology.png")
+
+
+def test_detect_pathology_findings_splits_by_category():
+    """Round 37: a dark blob in the inner retina (above the IS/OS-RPE
+    boundary) should register as intraretinal_fluid, not subretinal_fluid,
+    and vice versa -- otherwise the two categories are just cosmetic
+    relabeling of the same single detector rather than a real split.
+
+    Uses a flat (untextured) band rather than `_synthetic_retina`'s sine-wave
+    stripes: those stripes are meant to give boundary tracking real peaks to
+    follow, but a sine wave's own troughs are dark enough relative to the
+    smoothed row baseline to register as false-positive zones in both bands,
+    which would make this test meaningless. A fully flat, untextured band
+    also has no internal peaks for _track_boundaries to find, so inner
+    boundaries fall back to evenly spacing tissue_extent's own top/bottom --
+    which tapers near the image's left/right edges (a known, pre-existing
+    smoothing artifact, see the round-36 boundary-containment test above), so
+    assertions here only look at the carved column span (120:130), not the
+    whole-image zone count which the edges can pollute independently of the
+    category split under test.
+    """
+    height, width = 200, 300
+    band_top, band_height = 60, 60
+    gray = np.full((height, width), 0.03, dtype=np.float32)
+    gray[band_top : band_top + band_height, :] = 0.6
+    boundaries = _track_boundaries(gray)
+
+    inner_row = int((boundaries[0].mean() + boundaries[5].mean()) / 2)
+    gray_intraretinal = gray.copy()
+    gray_intraretinal[inner_row - 5 : inner_row + 5, 120:130] = 0.05
+    _, masks = _detect_pathology_findings(gray_intraretinal, boundaries)
+    assert masks["intraretinal_fluid"][:, 120:130].any()
+    assert not masks["subretinal_fluid"][:, 120:130].any()
+
+    outer_row = int((boundaries[6].mean() + boundaries[8].mean()) / 2)
+    gray_subretinal = gray.copy()
+    gray_subretinal[outer_row - 3 : outer_row + 3, 120:130] = 0.05
+    _, masks = _detect_pathology_findings(gray_subretinal, boundaries)
+    assert masks["subretinal_fluid"][:, 120:130].any()
+    assert not masks["intraretinal_fluid"][:, 120:130].any()
 
 
 def test_detect_pathology_zones_finds_a_localized_dark_blob():

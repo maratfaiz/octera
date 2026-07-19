@@ -669,6 +669,60 @@ button.secondary:hover:not(:disabled) {
   grid-column: 1 / -1;
 }
 
+.pathology-body {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.pathology-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pathology-checklist-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.pathology-checklist-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pathology-checklist-label {
+  flex: 1;
+  color: var(--ink);
+}
+
+.pathology-checklist-status {
+  color: var(--ink-faint);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pathology-checklist-status.positive {
+  color: #c0392b;
+}
+
+.pathology-checklist-note {
+  color: var(--ink-soft);
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+@media (max-width: 720px) {
+  .pathology-body {
+    grid-template-columns: 1fr;
+  }
+}
+
 .bar-row {
   margin-bottom: 12px;
 }
@@ -1045,6 +1099,10 @@ button.secondary:hover:not(:disabled) {
 }
 
 @media print {
+  @page {
+    margin: 8mm 8mm;
+  }
+
   * {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
@@ -1094,8 +1152,23 @@ button.secondary:hover:not(:disabled) {
     box-shadow: none;
     border: 1px solid #ccc;
     break-inside: avoid;
-    padding: 14px 16px;
-    margin-bottom: 10px;
+    padding: 10px 14px;
+    margin-bottom: 6px;
+  }
+
+  .report-card {
+    /* Unlike the compact visual cards above, this one is long free-flowing
+       text (grew again in round 37 with the new pathology-findings section)
+       -- forcing the whole card to avoid a page break just pushes it (and
+       everything after it) wholesale onto the next page, which is what left
+       an almost-empty trailing page after this round's content growth.
+       Letting a long text card break normally, like any other paragraph, is
+       the standard behavior for print anyway. */
+    break-inside: auto;
+  }
+
+  .pathology-checklist-note {
+    font-size: 11px;
   }
 
   .container {

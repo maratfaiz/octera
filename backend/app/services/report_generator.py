@@ -106,7 +106,7 @@ def generate_report(
     quality_issues: list[str],
     layer_thickness_um: dict[str, float],
     diagnoses: list[Diagnosis],
-    pathology_zone_count: int = 0,
+    pathology_findings: list[dict[str, Any]] | None = None,
 ) -> str:
     lines = ["Автоматическое заключение по результатам ОКТ-исследования (предварительное, требует подтверждения врачом).", ""]
 
@@ -122,11 +122,14 @@ def generate_report(
         lines.append(f"  - {LAYER_LABELS_RU.get(layer, layer)}: {value}")
     lines.append("")
 
-    if pathology_zone_count > 0:
+    detected = [f for f in (pathology_findings or []) if f.get("detected")]
+    if detected:
+        lines.append("Алгоритм отметил возможные патологические зоны (не диагноз, требует проверки врачом):")
+        for f in detected:
+            lines.append(f"  - {f['label_ru']}: {f['zone_count']} зон(ы)")
         lines.append(
-            f"Алгоритм выделил {pathology_zone_count} гипорефлективных (тёмных) зон на снимке — "
-            "это не диагноз, а автоматически найденные участки, требующие визуальной проверки врачом "
-            "(могут быть жидкостью, кистой, отслойкой или артефактом снимка)."
+            "  Проверены только эти категории — метод пока не различает эпиретинальную мембрану, "
+            "отслойку пигментного эпителия, друзы и субретинальный гиперрефлективный материал."
         )
         lines.append("")
 

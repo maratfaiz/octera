@@ -169,15 +169,37 @@ export default function StudyPage() {
                     Карта патологий
                   </p>
                   {pathologyUrl ? (
-                    <>
+                    <div className="pathology-body">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={pathologyUrl} alt="Карта патологий" style={{ width: "100%", borderRadius: 8 }} />
-                      <p style={{ color: "var(--ink-soft)", fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-                        {result && result.pathology_zone_count > 0
-                          ? `Алгоритм отметил ${result.pathology_zone_count} зон(ы) — требуют проверки врачом, это не диагноз.`
-                          : "Выраженных гипорефлективных зон не найдено."}
-                      </p>
-                    </>
+                      {result && (
+                        <div className="pathology-checklist">
+                          {result.pathology_findings.map((f) => (
+                            <div key={f.key} className="pathology-checklist-row">
+                              <span
+                                className="pathology-checklist-dot"
+                                style={{ background: `rgb(${f.color.join(",")})` }}
+                              />
+                              <span className="pathology-checklist-label">{f.label_ru}</span>
+                              <span
+                                className={
+                                  f.detected
+                                    ? "pathology-checklist-status positive"
+                                    : "pathology-checklist-status"
+                                }
+                              >
+                                {f.detected ? `Выявлены (${f.zone_count})` : "Не выявлены"}
+                              </span>
+                            </div>
+                          ))}
+                          <p className="pathology-checklist-note">
+                            Это не диагноз — автоматически найденные участки для проверки врачом. Проверены пока
+                            только эти категории; эпиретинальная мембрана, отслойка пигментного эпителия, друзы и
+                            субретинальный гиперрефлективный материал — в разработке.
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   ) : (
                     <p style={{ color: "var(--ink-soft)" }}>
                       {study?.status === "completed" ? "Недоступна" : "Ожидает завершения анализа"}
@@ -211,7 +233,7 @@ export default function StudyPage() {
                     ))}
                   </div>
 
-                  <div className="card">
+                  <div className="card report-card">
                     <p className="card-title">
                       <span className="card-title-icon">
                         <ReportIcon />

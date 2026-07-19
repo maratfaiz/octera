@@ -21,7 +21,10 @@ class AnalysisResult(Base):
     layer_thickness: Mapped[dict] = mapped_column(JSON, default=dict)
 
     pathology_map_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    pathology_zone_count: Mapped[int] = mapped_column(default=0)
+    # [{key, label_ru, color, detected, zone_count}, ...] -- see
+    # app/services/segmentation.py's PathologyFinding for the per-category
+    # breakdown (round 37; a single pathology_zone_count used to be here).
+    pathology_findings: Mapped[list] = mapped_column(JSON, default=list)
 
     diagnoses: Mapped[list] = mapped_column(JSON, default=list)  # [{code, label, probability}]
 

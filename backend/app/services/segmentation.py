@@ -23,16 +23,30 @@ The pixel-to-micron scale factor is a placeholder -- no scan calibration
 metadata is available from a plain JPEG/PNG upload, so treat absolute
 thickness values as illustrative, not measured.
 
-Also flags candidate "pathology zones": patches inside the retinal band
-that are notably darker (hyporeflective) than their local surroundings.
-Fluid, cysts and serous detachment all appear optically empty (dark) on
-OCT, so local-contrast thresholding is a real, classical way to surface
-candidate regions -- but it is a generic darkness detector, not a trained
-classifier that tells cyst apart from fluid apart from a shadow artifact.
-Present it to the user as "algorithm-flagged zones for review", never as a
-diagnosis. Detection runs on a "flattened" version of the retinal band
-(each column shifted so its own top boundary sits at row 0) so the local
-brightness baseline isn't distorted by the band's curvature either.
+Also flags candidate pathology zones: patches inside the retinal band that
+are notably darker (hyporeflective) than their local surroundings. Fluid,
+cysts and serous detachment all appear optically empty (dark) on OCT, so
+local-contrast thresholding is a real, classical way to surface candidate
+regions -- but it is a generic darkness detector, not a trained classifier
+that tells cyst apart from fluid apart from a shadow artifact. Detection
+runs on a "flattened" version of the retinal band (each column shifted so
+its own top boundary sits at row 0) so the local brightness baseline isn't
+distorted by the band's curvature either.
+
+Round 37 (still a first step, not the full picture -- see round 37's README
+entry): splits that single generic bucket into two categories by WHERE the
+dark zone sits relative to the round-36 layer boundaries, which is a real,
+if coarse, anatomical distinction rather than an arbitrary one --
+intraretinal fluid/cysts (above the photoreceptor/RPE complex, where cysts
+classically sit in INL/OPL/ONL) versus subretinal fluid (at/below the
+photoreceptor-RPE complex, down to the choroid, where subretinal fluid
+classically pools). Deliberately NOT attempting the reference clinical
+report's other categories yet (epiretinal membrane, RPE detachment, drusen,
+subretinal hyperreflective material) -- those need shape/contour analysis
+of the RPE line rather than a simple darkness threshold, and rushing a
+low-confidence heuristic for something that reads as a specific clinical
+finding is worse than honestly not claiming it yet. Present all of this to
+the user as "algorithm-flagged zones for review", never as a diagnosis.
 """
 
 from dataclasses import dataclass
@@ -114,13 +128,44 @@ ASSUMED_UM_PER_PIXEL = 2.0
 DARKNESS_OFFSET = 0.20  # a zone must be this much darker than the local layer baseline
 MIN_ZONE_AREA_DIVISOR = 3000  # min blob area, as a fraction of the retinal band's pixel count
 
+# Pathology categories (round 37), each keyed to a (start layer boundary, end
+# layer boundary) pair from LAYERS -- see this module's docstring for why only
+# these two of the reference clinical report's categories are attempted so
+# far. Indices into `_track_boundaries`'s output: 0=ILM, 5=ONL/IS-OS,
+# 6=IS-OS/RPE, 8=outer choroid edge.
+PATHOLOGY_LABELS_RU = {
+    "intraretinal_fluid": "Интраретинальные кисты / жидкость",
+    "subretinal_fluid": "Субретинальная жидкость",
+}
+PATHOLOGY_SHORT_LABELS = {
+    "intraretinal_fluid": "Интраретинальная жидкость",
+    "subretinal_fluid": "Субретинальная жидкость",
+}
+PATHOLOGY_COLORS = {
+    "intraretinal_fluid": (70, 170, 255),  # blue, matches the reference report's cyst color
+    "subretinal_fluid": (70, 210, 120),  # green, matches the reference report's SRF color
+}
+PATHOLOGY_BOUNDARY_RANGES = {
+    "intraretinal_fluid": (0, 5),
+    "subretinal_fluid": (6, 8),
+}
+
+
+@dataclass
+class PathologyFinding:
+    key: str
+    label_ru: str
+    color: tuple[int, int, int]
+    detected: bool
+    zone_count: int
+
 
 @dataclass
 class SegmentationOutput:
     map_path: str
     layer_thickness_um: dict[str, float]
     pathology_map_path: str
-    pathology_zone_count: int
+    pathology_findings: list[PathologyFinding]
 
 
 def _find_peaks(profile: np.ndarray, min_distance: int) -> list[int]:
@@ -306,13 +351,84 @@ def _detect_pathology_zones(gray: np.ndarray, boundaries) -> tuple[np.ndarray, i
     return mask, zone_count
 
 
-def _draw_pathology_overlay(gray: np.ndarray, mask: np.ndarray) -> np.ndarray:
+def _detect_pathology_findings(
+    gray: np.ndarray, boundaries: np.ndarray
+) -> tuple[list[PathologyFinding], dict[str, np.ndarray]]:
+    """Runs the generic dark-zone detector once per category in
+    PATHOLOGY_BOUNDARY_RANGES, scoped to that category's slice of the
+    round-36 layer boundaries -- see this module's docstring for why this
+    boundary-relative split, not a trained per-category classifier.
+    """
+    findings: list[PathologyFinding] = []
+    masks: dict[str, np.ndarray] = {}
+    for key, (start_idx, end_idx) in PATHOLOGY_BOUNDARY_RANGES.items():
+        mask, count = _detect_pathology_zones(gray, [boundaries[start_idx], boundaries[end_idx]])
+        masks[key] = mask
+        findings.append(
+            PathologyFinding(
+                key=key,
+                label_ru=PATHOLOGY_LABELS_RU[key],
+                color=PATHOLOGY_COLORS[key],
+                detected=count > 0,
+                zone_count=count,
+            )
+        )
+    return findings, masks
+
+
+def _compose_legend_canvas(
+    rgb: np.ndarray, entries: list[tuple[str, tuple[int, int, int]]]
+) -> Image.Image:
+    """Appends a color-swatch legend below `rgb`, wrapping entries onto as many
+    rows as the image's actual width needs. Shared by the layer overlay and the
+    pathology overlay so the narrow-image wrap fix (see
+    test_layer_overlay_legend_wraps_instead_of_running_off_narrow_images)
+    applies to both instead of only whichever one it was first written for.
+    """
+    height, width = rgb.shape[:2]
+    measurer = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    swatch_w, gap, margin = 14, 16, 6
+    rows: list[list[tuple[str, tuple[int, int, int], int]]] = [[]]
+    x = margin
+    for label, color in entries:
+        entry_w = swatch_w + int(measurer.textlength(label)) + gap
+        if x + entry_w > width and rows[-1]:
+            rows.append([])
+            x = margin
+        rows[-1].append((label, color, x))
+        x += entry_w
+    row_h = 20
+    legend_h = margin + len(rows) * row_h
+
+    canvas = np.zeros((height + legend_h, width, 3), dtype=np.uint8)
+    canvas[:height] = rgb
+    img = Image.fromarray(canvas, mode="RGB")
+    draw = ImageDraw.Draw(img)
+    for row_i, row in enumerate(rows):
+        y = height + margin + row_i * row_h
+        for label, color, x in row:
+            draw.rectangle([x, y + 2, x + 10, y + 12], fill=color)
+            draw.text((x + swatch_w, y), label, fill=(255, 255, 255))
+    return img
+
+
+def _draw_pathology_overlay(
+    gray: np.ndarray, findings: list[PathologyFinding], masks: dict[str, np.ndarray]
+) -> np.ndarray:
     base = (np.clip(gray, 0, 1) * 255).astype(np.float32)
     rgb = np.stack([base, base, base], axis=-1)
-    overlay_color = np.array([255, 80, 60], dtype=np.float32)
-    alpha = 0.45
-    rgb[mask] = rgb[mask] * (1 - alpha) + overlay_color * alpha
-    return rgb.astype(np.uint8)
+    alpha = 0.5
+    for finding in findings:
+        mask = masks[finding.key]
+        color = np.array(finding.color, dtype=np.float32)
+        rgb[mask] = rgb[mask] * (1 - alpha) + color * alpha
+
+    entries = [
+        (f"{PATHOLOGY_SHORT_LABELS[f.key]}: {'выявлены' if f.detected else 'не выявлены'}", f.color)
+        for f in findings
+    ]
+    img = _compose_legend_canvas(rgb.astype(np.uint8), entries)
+    return np.array(img)
 
 
 def _detect_fovea_column(boundaries: np.ndarray) -> int | None:
@@ -372,41 +488,12 @@ def _draw_layer_overlay(gray: np.ndarray, boundaries: np.ndarray) -> np.ndarray:
         band_mask = (row_idx >= top) & (row_idx < bottom)
         rgb[band_mask] = rgb[band_mask] * (1 - alpha) + color * alpha
 
-    # Lay out the legend first (on a throwaway draw context, just to measure
-    # real text widths via textlength) and wrap entries onto as many rows as
-    # the image's actual width needs -- a narrow upload (a tight crop, or this
-    # module's own 200-300px test fixtures) would otherwise have later labels
-    # (up to and including "RPE") drawn entirely off-canvas and never visible.
-    measurer = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    swatch_w, gap, margin = 14, 16, 6
     entries = [(LAYER_SHORT_LABELS[layer], BOUNDARY_COLORS[i % len(BOUNDARY_COLORS)]) for i, layer in enumerate(LAYERS)]
-    rows: list[list[tuple[str, tuple[int, int, int], int]]] = [[]]
-    x = margin
-    for label, color in entries:
-        entry_w = swatch_w + int(measurer.textlength(label)) + gap
-        if x + entry_w > width and rows[-1]:
-            rows.append([])
-            x = margin
-        rows[-1].append((label, color, x))
-        x += entry_w
-    row_h = 20
-    legend_h = margin + len(rows) * row_h
-
-    canvas = np.zeros((height + legend_h, width, 3), dtype=np.uint8)
-    canvas[:height] = rgb.astype(np.uint8)
-    img = Image.fromarray(canvas, mode="RGB")
+    img = _compose_legend_canvas(rgb.astype(np.uint8), entries)
 
     fovea_col = _detect_fovea_column(boundaries)
     if fovea_col is not None:
         _draw_fovea_marker(img, fovea_col, int(boundaries[0][fovea_col]), int(boundaries[-1][fovea_col]))
-
-    draw = ImageDraw.Draw(img)
-
-    for row_i, row in enumerate(rows):
-        y = height + margin + row_i * row_h
-        for label, color, x in row:
-            draw.rectangle([x, y + 2, x + 10, y + 12], fill=color)
-            draw.text((x + swatch_w, y), label, fill=(255, 255, 255))
 
     return np.array(img)
 
@@ -426,9 +513,8 @@ def segment_layers(image_path: str) -> SegmentationOutput:
         for layer, top, bottom in zip(LAYERS, boundaries, boundaries[1:])
     }
 
-    tissue_top, tissue_bottom = tissue_extent(gray)
-    pathology_mask, zone_count = _detect_pathology_zones(gray, [tissue_top, tissue_bottom])
-    pathology_overlay = _draw_pathology_overlay(gray, pathology_mask)
+    findings, masks = _detect_pathology_findings(gray, boundaries)
+    pathology_overlay = _draw_pathology_overlay(gray, findings, masks)
     pathology_map_path = str(Path(image_path).with_name(f"{Path(image_path).stem}_pathology.png"))
     Image.fromarray(pathology_overlay, mode="RGB").save(pathology_map_path)
 
@@ -436,5 +522,5 @@ def segment_layers(image_path: str) -> SegmentationOutput:
         map_path=map_path,
         layer_thickness_um=thickness,
         pathology_map_path=pathology_map_path,
-        pathology_zone_count=zone_count,
+        pathology_findings=findings,
     )

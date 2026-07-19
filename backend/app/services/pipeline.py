@@ -6,6 +6,7 @@ If image quality is too low, segmentation/diagnosis are skipped and the
 pipeline returns early with the quality issues only.
 """
 
+import dataclasses
 from typing import Any
 
 from app.services.diagnosis import predict_diagnoses
@@ -26,7 +27,7 @@ def run_analysis_pipeline(image_path: str) -> dict[str, Any]:
             "segmentation_map_path": None,
             "layer_thickness": {},
             "pathology_map_path": None,
-            "pathology_zone_count": 0,
+            "pathology_findings": [],
             "diagnoses": [],
             "report_text": (
                 "Качество снимка недостаточно для автоматического анализа. "
@@ -36,11 +37,12 @@ def run_analysis_pipeline(image_path: str) -> dict[str, Any]:
 
     segmentation = segment_layers(image_path)
     diagnoses = predict_diagnoses(image_path)
+    pathology_findings = [dataclasses.asdict(f) for f in segmentation.pathology_findings]
     report_text = generate_report(
         quality_score=quality.score,
         quality_issues=quality.issues,
         layer_thickness_um=segmentation.layer_thickness_um,
-        pathology_zone_count=segmentation.pathology_zone_count,
+        pathology_findings=pathology_findings,
         diagnoses=diagnoses,
     )
 
@@ -50,7 +52,7 @@ def run_analysis_pipeline(image_path: str) -> dict[str, Any]:
         "segmentation_map_path": segmentation.map_path,
         "layer_thickness": segmentation.layer_thickness_um,
         "pathology_map_path": segmentation.pathology_map_path,
-        "pathology_zone_count": segmentation.pathology_zone_count,
+        "pathology_findings": pathology_findings,
         "diagnoses": [d.__dict__ for d in diagnoses],
         "report_text": report_text,
     }
