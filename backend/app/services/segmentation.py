@@ -45,45 +45,67 @@ from scipy import ndimage
 from app.ml.signal_utils import dark_mask_in_band, flatten_band, smooth, tissue_extent
 
 LAYERS = [
-    "nfl_gcl",  # nerve fiber layer / ganglion cell layer
-    "ipl_inl",  # inner plexiform / inner nuclear layer
-    "opl_onl",  # outer plexiform / outer nuclear layer
-    "photoreceptor",
-    "rpe",
+    "nfl",  # nerve fiber layer
+    "gcl_ipl",  # ganglion cell / inner plexiform layer
+    "inl",  # inner nuclear layer
+    "opl",  # outer plexiform layer
+    "onl",  # outer nuclear layer
+    "is_os",  # photoreceptor inner/outer segments
+    "rpe",  # retinal pigment epithelium
+    "choroid",
 ]
 
 # Human-readable Russian labels for LAYERS, for anywhere a clinician-facing view
 # (report text, UI) needs to show layer thickness -- the bare codes above are an
 # internal shorthand, not something to put in front of a doctor.
+#
+# Split into 8 bands (round 36) instead of the previous 5 merged ones, closer to
+# standard OCT-device layer nomenclature. Caveat that matters for how much to
+# trust any single boundary: there is no per-layer ground truth for this
+# dataset (only a whole-scan DME/NORMAL label), so accuracy of each individual
+# boundary isn't validated the way the DME classifier's accuracy is -- treat
+# thin/low-contrast boundaries (ELM in particular was left merged into IS/OS
+# rather than split out, since it's a single faint line most heuristic
+# peak-detection can lose track of on a noisy scan) as illustrative anatomy,
+# not a measured clinical reading.
 LAYER_LABELS_RU = {
-    "nfl_gcl": "Слой нервных волокон / ганглиозных клеток (NFL/GCL)",
-    "ipl_inl": "Внутренний плексиформный / внутренний ядерный слой (IPL/INL)",
-    "opl_onl": "Наружный плексиформный / наружный ядерный слой (OPL/ONL)",
-    "photoreceptor": "Слой фоторецепторов",
+    "nfl": "Слой нервных волокон (NFL)",
+    "gcl_ipl": "Слой ганглиозных клеток / внутренний плексиформный слой (GCL/IPL)",
+    "inl": "Внутренний ядерный слой (INL)",
+    "opl": "Наружный плексиформный слой (OPL)",
+    "onl": "Наружный ядерный слой (ONL)",
+    "is_os": "Слой фоторецепторов (IS/OS)",
     "rpe": "Пигментный эпителий сетчатки (RPE)",
+    "choroid": "Хориоидея",
 }
 
 # Compact standard abbreviations for the on-image legend (_draw_layer_overlay) --
 # the full LAYER_LABELS_RU phrases are for text (report, thickness table), not a
 # space-constrained legend; these match the bare-abbreviation convention real
-# OCT device software uses directly on the scan (e.g. "NFL/GCL", not the raw
-# Python identifier "nfl_gcl").
+# OCT device software uses directly on the scan (e.g. "GCL/IPL", not the raw
+# Python identifier "gcl_ipl").
 LAYER_SHORT_LABELS = {
-    "nfl_gcl": "NFL/GCL",
-    "ipl_inl": "IPL/INL",
-    "opl_onl": "OPL/ONL",
-    "photoreceptor": "PHOTORECEPTOR",
+    "nfl": "NFL",
+    "gcl_ipl": "GCL/IPL",
+    "inl": "INL",
+    "opl": "OPL",
+    "onl": "ONL",
+    "is_os": "IS/OS",
     "rpe": "RPE",
+    "choroid": "CHOROID",
 }
 
-# One overlay color per boundary line (needs len(LAYERS) + 1 of these).
+# One overlay color per layer band (_draw_layer_overlay indexes this mod
+# len(LAYERS), so it's safe even if the two counts ever drift).
 BOUNDARY_COLORS = [
     (255, 220, 60),
-    (255, 140, 60),
-    (255, 90, 90),
-    (255, 90, 200),
+    (255, 170, 60),
+    (255, 120, 70),
+    (255, 90, 130),
+    (220, 90, 220),
     (150, 120, 255),
     (90, 180, 255),
+    (90, 220, 200),
 ]
 
 ASSUMED_UM_PER_PIXEL = 2.0
@@ -146,15 +168,39 @@ def _track_boundaries(gray: np.ndarray) -> np.ndarray:
     """Returns a (len(LAYERS) + 1, width) array: one tracked row-position per
     boundary per column, following the retina's actual curvature.
 
-    Falls back to flat, evenly-spaced boundaries (broadcast across every
-    column) when the image has no distinguishable banded structure at all
-    (e.g. a uniform test image) -- callers always get a full set.
+    The outermost two boundaries (index 0 = ILM/vitreoretinal interface,
+    index -1 = outer edge of the choroid signal) are pinned to
+    `signal_utils.tissue_extent` rather than independently rediscovered here --
+    that function is already the shared, tested "real tissue vs. background"
+    detector used by the pathology-zone detector and the classifier's domain
+    features (see signal_utils.py's module docstring). An earlier version of
+    this function re-derived its own top/bottom from column-peak prominence
+    with no floor on brightness; splitting into more/thinner layers (round 36:
+    5 layers -> 8) shrank the smoothing window enough that faint background
+    noise above the retina started registering as a legitimate peak, so the
+    tracked "top" boundary drifted up into empty vitreous space, and the
+    labeled band for that boundary swallowed real background in the overlay.
+    Confining peak search to inside the tissue band removes that failure mode
+    at the source instead of just tuning parameters around it.
+
+    Falls back to flat, evenly-spaced boundaries within the tissue band (or
+    the whole image height, if no tissue is detected at all) when the image
+    has no distinguishable inner banded structure -- callers always get a
+    full set.
     """
     height, width = gray.shape
     needed = len(LAYERS) + 1
-    window = max(3, height // 40)
-    min_distance = max(2, height // 20)
-    snap_tolerance = max(4, height // 8)
+    inner_needed = needed - 2  # excludes the two tissue_extent-pinned boundaries
+
+    tissue_top, tissue_bottom = tissue_extent(gray)
+    has_tissue = bool((tissue_bottom > tissue_top).any())
+    if not has_tissue:
+        flat = np.linspace(0, height - 1, needed)
+        return np.tile(flat[:, None], (1, width))
+
+    window = max(3, height // (needed * 6))
+    min_distance = max(2, height // (needed * 4))
+    snap_tolerance = max(4, height // (needed * 2))
 
     # Cached across both the seed-column search and the full-width tracking
     # pass below -- the sampled columns _seed_column scores are a subset of
@@ -164,46 +210,60 @@ def _track_boundaries(gray: np.ndarray) -> np.ndarray:
 
     def peaks_at(col: int) -> list[int]:
         if col not in peaks_cache:
-            peaks_cache[col] = _column_peaks(gray, col, window, min_distance)
+            top_i, bottom_i = int(tissue_top[col]), int(tissue_bottom[col])
+            if bottom_i <= top_i:
+                peaks_cache[col] = []
+            else:
+                profile = smooth(gray[top_i:bottom_i, col], window)
+                peaks_cache[col] = [p + top_i for p in _find_peaks(profile, min_distance)]
         return peaks_cache[col]
 
-    seed_col = _seed_column(gray, window, min_distance, needed, peaks_at)
-    if seed_col is None:
-        flat = np.linspace(0, height - 1, needed)
-        return np.tile(flat[:, None], (1, width))
-
-    seed_peaks = peaks_at(seed_col)
-    seed_profile = smooth(gray[:, seed_col], window)
-    top_by_prominence = np.argsort([seed_profile[p] for p in seed_peaks])[-needed:]
-    seed_positions = sorted(np.array(seed_peaks)[top_by_prominence].tolist())
-
     boundaries = np.zeros((needed, width), dtype=float)
-    boundaries[:, seed_col] = seed_positions
+    boundaries[0] = tissue_top
+    boundaries[-1] = tissue_bottom
 
-    def _advance(order: range, prev_positions: list[float]) -> None:
-        prev = list(prev_positions)
-        for col in order:
-            peaks = peaks_at(col)
-            new_positions = []
-            for p in prev:
-                if peaks:
-                    nearest = min(peaks, key=lambda x: abs(x - p))
-                    new_positions.append(nearest if abs(nearest - p) <= snap_tolerance else p)
-                else:
-                    new_positions.append(p)
-            # Boundaries can't cross -- enforce non-decreasing order defensively
-            # against a noisy column snapping a boundary past its neighbor.
-            for i in range(1, len(new_positions)):
-                new_positions[i] = max(new_positions[i], new_positions[i - 1] + 1)
-            boundaries[:, col] = new_positions
-            prev = new_positions
+    if inner_needed > 0:
+        seed_col = _seed_column(gray, window, min_distance, inner_needed, peaks_at)
+        if seed_col is None:
+            for col in range(width):
+                boundaries[1:-1, col] = np.linspace(tissue_top[col], tissue_bottom[col], needed)[1:-1]
+        else:
+            seed_peaks = peaks_at(seed_col)
+            seed_profile = smooth(gray[:, seed_col], window)
+            top_by_prominence = np.argsort([seed_profile[p] for p in seed_peaks])[-inner_needed:]
+            seed_positions = sorted(np.array(seed_peaks)[top_by_prominence].tolist())
 
-    _advance(range(seed_col + 1, width), seed_positions)
-    _advance(range(seed_col - 1, -1, -1), seed_positions)
+            boundaries[1:-1, seed_col] = seed_positions
+
+            def _advance(order: range, prev_positions: list[float]) -> None:
+                prev = list(prev_positions)
+                for col in order:
+                    peaks = peaks_at(col)
+                    new_positions = []
+                    for p in prev:
+                        if peaks:
+                            nearest = min(peaks, key=lambda x: abs(x - p))
+                            new_positions.append(nearest if abs(nearest - p) <= snap_tolerance else p)
+                        else:
+                            new_positions.append(p)
+                    # Boundaries can't cross -- enforce non-decreasing order defensively
+                    # against a noisy column snapping a boundary past its neighbor, and
+                    # clamp back inside this column's own tissue band.
+                    lo, hi = tissue_top[col], tissue_bottom[col]
+                    for i in range(1, len(new_positions)):
+                        new_positions[i] = max(new_positions[i], new_positions[i - 1] + 1)
+                    new_positions = [float(np.clip(p, lo, hi)) for p in new_positions]
+                    boundaries[1:-1, col] = new_positions
+                    prev = new_positions
+
+            _advance(range(seed_col + 1, width), seed_positions)
+            _advance(range(seed_col - 1, -1, -1), seed_positions)
 
     smooth_window = max(3, width // 30)
     for i in range(needed):
         boundaries[i] = smooth(boundaries[i], smooth_window)
+    boundaries[0] = tissue_top
+    boundaries[-1] = tissue_bottom
     for i in range(1, needed):
         boundaries[i] = np.maximum(boundaries[i], boundaries[i - 1] + 1)
     return np.clip(boundaries, 0, height - 1)
@@ -255,6 +315,42 @@ def _draw_pathology_overlay(gray: np.ndarray, mask: np.ndarray) -> np.ndarray:
     return rgb.astype(np.uint8)
 
 
+def _detect_fovea_column(boundaries: np.ndarray) -> int | None:
+    """Column of the foveal pit -- the point where the ILM boundary (the
+    retina's top edge, `boundaries[0]`) dips deepest, since the fovea is a
+    genuine anatomical thinning of the inner retina, not a fixed image
+    position. Restricted to the central 60% of the scan width (real B-scans
+    are usually centered on the fovea, and this avoids a false hit on
+    vignetting/edge tracking noise near the image border).
+
+    Returns None when there's no dip clearly beyond tracking noise -- e.g. a
+    peripheral (non-macular) scan genuinely has no foveal pit in frame, and
+    claiming one would be a fabricated finding, not a detected one.
+    """
+    width = boundaries.shape[1]
+    height_scale = boundaries[-1].mean() - boundaries[0].mean()
+    lo, hi = int(width * 0.2), int(width * 0.8)
+    if hi <= lo or height_scale <= 0:
+        return None
+    ilm = boundaries[0]
+    segment = ilm[lo:hi]
+    col = lo + int(np.argmax(segment))
+    dip = float(ilm[col] - np.median(ilm))
+    if dip < max(4.0, 0.08 * height_scale):
+        return None
+    return col
+
+
+def _draw_fovea_marker(img: Image.Image, col: int, top_row: int, bottom_row: int) -> None:
+    draw = ImageDraw.Draw(img)
+    for y in range(top_row, bottom_row, 6):
+        draw.line([(col, y), (col, min(y + 3, bottom_row))], fill=(255, 255, 255), width=1)
+    label = "Fovea"
+    text_y = max(0, top_row - 16)
+    text_w = int(draw.textlength(label))
+    draw.text((min(max(col - text_w // 2, 2), img.width - text_w - 2), text_y), label, fill=(255, 255, 255))
+
+
 def _draw_layer_overlay(gray: np.ndarray, boundaries: np.ndarray) -> np.ndarray:
     """Tints each tracked layer band with its own translucent color directly on
     the scan, plus a color-coded legend strip naming each layer -- a labeled
@@ -299,6 +395,11 @@ def _draw_layer_overlay(gray: np.ndarray, boundaries: np.ndarray) -> np.ndarray:
     canvas = np.zeros((height + legend_h, width, 3), dtype=np.uint8)
     canvas[:height] = rgb.astype(np.uint8)
     img = Image.fromarray(canvas, mode="RGB")
+
+    fovea_col = _detect_fovea_column(boundaries)
+    if fovea_col is not None:
+        _draw_fovea_marker(img, fovea_col, int(boundaries[0][fovea_col]), int(boundaries[-1][fovea_col]))
+
     draw = ImageDraw.Draw(img)
 
     for row_i, row in enumerate(rows):
