@@ -50,13 +50,31 @@ the user as "algorithm-flagged zones for review", never as a diagnosis.
 """
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from scipy import ndimage
 
 from app.ml.signal_utils import dark_mask_in_band, flatten_band, smooth, tissue_extent
+
+# PIL's default bitmap font (used by ImageDraw.text when no font is given) has
+# no Cyrillic glyphs -- every character silently renders as a "tofu" box.
+# This went unnoticed until round 37 added the first Cyrillic legend text
+# (the layer-overlay legend before it only ever used ASCII short labels like
+# "RPE"); the pathology-map legend's "Выявлены"/"Не выявлены" was completely
+# unreadable in the saved PNG (though fine in the study page's HTML, which
+# uses the browser's own font, not PIL's). Bundled in-repo rather than
+# relying on whatever fonts happen to be installed in a given deployment
+# container -- the production Dockerfile is python:3.12-slim, which ships
+# none.
+_FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "DejaVuSans.ttf"
+
+
+@lru_cache(maxsize=4)
+def _legend_font(size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(str(_FONT_PATH), size)
 
 LAYERS = [
     "nfl",  # nerve fiber layer
@@ -131,8 +149,18 @@ MIN_ZONE_AREA_DIVISOR = 3000  # min blob area, as a fraction of the retinal band
 # Pathology categories (round 37), each keyed to a (start layer boundary, end
 # layer boundary) pair from LAYERS -- see this module's docstring for why only
 # these two of the reference clinical report's categories are attempted so
-# far. Indices into `_track_boundaries`'s output: 0=ILM, 5=ONL/IS-OS,
-# 6=IS-OS/RPE, 8=outer choroid edge.
+# far. Boundary indices are derived from LAYERS itself (not hardcoded
+# integers) so a future reorder/resize of LAYERS can't silently desync these
+# ranges from the layer names they're supposed to track.
+#
+# The split point is IS/OS's own top edge, not its bottom: subretinal fluid
+# classically pools between the photoreceptors and RPE, i.e. starting AT the
+# photoreceptor layer rather than below it, and the two ranges must share
+# that boundary exactly -- splitting at IS/OS's *bottom* instead (used until
+# this was caught in code review) left the IS/OS band itself uncovered by
+# either category, silently dropping a real hyporeflective zone there from
+# both the report and the UI checklist.
+_INTRARETINAL_SUBRETINAL_SPLIT = LAYERS.index("is_os")
 PATHOLOGY_LABELS_RU = {
     "intraretinal_fluid": "Интраретинальные кисты / жидкость",
     "subretinal_fluid": "Субретинальная жидкость",
@@ -146,8 +174,8 @@ PATHOLOGY_COLORS = {
     "subretinal_fluid": (70, 210, 120),  # green, matches the reference report's SRF color
 }
 PATHOLOGY_BOUNDARY_RANGES = {
-    "intraretinal_fluid": (0, 5),
-    "subretinal_fluid": (6, 8),
+    "intraretinal_fluid": (0, _INTRARETINAL_SUBRETINAL_SPLIT),
+    "subretinal_fluid": (_INTRARETINAL_SUBRETINAL_SPLIT, len(LAYERS)),
 }
 
 
@@ -177,11 +205,6 @@ def _find_peaks(profile: np.ndarray, min_distance: int) -> list[int]:
             elif profile[i] > profile[peaks[-1]]:
                 peaks[-1] = i
     return peaks
-
-
-def _column_peaks(gray: np.ndarray, col: int, window: int, min_distance: int) -> list[int]:
-    profile = smooth(gray[:, col], window)
-    return _find_peaks(profile, min_distance)
 
 
 def _seed_column(
@@ -309,12 +332,39 @@ def _track_boundaries(gray: np.ndarray) -> np.ndarray:
         boundaries[i] = smooth(boundaries[i], smooth_window)
     boundaries[0] = tissue_top
     boundaries[-1] = tissue_bottom
+    # Re-clamp inner boundaries inside this column's own tissue band, leaving
+    # enough headroom for every later boundary to still fit by the final
+    # tissue_bottom. Cross-column smoothing above can push an inner boundary
+    # past tissue_bottom at a column where the tissue band's shape changes
+    # sharply (vignetting, a partial retina near the image edge, or any sharp
+    # tissue_bottom drop-off) -- the per-column clamp `_advance` already
+    # applied before smoothing doesn't survive it. Left unclamped, the
+    # monotonic-order enforcement below would push boundaries[-1] (just reset
+    # to the true tissue_bottom two lines above) back out past the tissue
+    # edge to satisfy boundaries[-1] > boundaries[-2], silently breaking this
+    # function's own documented invariant that boundaries[-1] always equals
+    # tissue_extent's bottom.
+    for i in range(1, needed - 1):
+        margin = needed - 1 - i
+        boundaries[i] = np.clip(boundaries[i], tissue_top, tissue_bottom - margin)
     for i in range(1, needed):
         boundaries[i] = np.maximum(boundaries[i], boundaries[i - 1] + 1)
     return np.clip(boundaries, 0, height - 1)
 
 
-def _detect_pathology_zones(gray: np.ndarray, boundaries) -> tuple[np.ndarray, int]:
+def _detect_pathology_zones(
+    gray: np.ndarray, boundaries, min_area_reference_pixels: int | None = None
+) -> tuple[np.ndarray, int]:
+    """`min_area_reference_pixels` lets a caller calibrate the min-blob-size
+    noise filter against a different (typically larger) area than this call's
+    own `boundaries` span -- round 37 splits what used to be one call over
+    the whole retinal band into several calls over narrower sub-bands, and
+    without this, each sub-band's smaller `valid.sum()` would push
+    `min_area` down (or to the `max(15, ...)` floor) purely because the scope
+    got split, silently making the noise filter more permissive than the
+    pre-split single-detector behavior for no image-content reason. Defaults
+    to the call's own band (the original, single-detector behavior).
+    """
     height, width = gray.shape
     top = np.broadcast_to(np.asarray(boundaries[0], dtype=float), (width,))
     bottom = np.broadcast_to(np.asarray(boundaries[-1], dtype=float), (width,))
@@ -326,7 +376,8 @@ def _detect_pathology_zones(gray: np.ndarray, boundaries) -> tuple[np.ndarray, i
 
     dark_mask = dark_mask_in_band(flat, valid, DARKNESS_OFFSET)
     labeled, num_features = ndimage.label(dark_mask)
-    min_area = max(15, int(valid.sum()) // MIN_ZONE_AREA_DIVISOR)
+    area_reference = min_area_reference_pixels if min_area_reference_pixels is not None else int(valid.sum())
+    min_area = max(15, area_reference // MIN_ZONE_AREA_DIVISOR)
     max_width = 0.4 * width  # real fluid/cyst pockets are localized blobs, not
     # bands spanning most of the scan's width (which is usually a vitreous/layer
     # transition artifact rather than a discrete pathological zone).
@@ -359,10 +410,18 @@ def _detect_pathology_findings(
     round-36 layer boundaries -- see this module's docstring for why this
     boundary-relative split, not a trained per-category classifier.
     """
+    width = gray.shape[1]
+    full_top = np.broadcast_to(np.asarray(boundaries[0], dtype=float), (width,))
+    full_bottom = np.broadcast_to(np.asarray(boundaries[-1], dtype=float), (width,))
+    _, full_valid = flatten_band(gray, full_top, full_bottom)
+    full_band_pixels = int(full_valid.sum())
+
     findings: list[PathologyFinding] = []
     masks: dict[str, np.ndarray] = {}
     for key, (start_idx, end_idx) in PATHOLOGY_BOUNDARY_RANGES.items():
-        mask, count = _detect_pathology_zones(gray, [boundaries[start_idx], boundaries[end_idx]])
+        mask, count = _detect_pathology_zones(
+            gray, [boundaries[start_idx], boundaries[end_idx]], min_area_reference_pixels=full_band_pixels
+        )
         masks[key] = mask
         findings.append(
             PathologyFinding(
@@ -386,12 +445,13 @@ def _compose_legend_canvas(
     applies to both instead of only whichever one it was first written for.
     """
     height, width = rgb.shape[:2]
+    font = _legend_font(13)
     measurer = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     swatch_w, gap, margin = 14, 16, 6
     rows: list[list[tuple[str, tuple[int, int, int], int]]] = [[]]
     x = margin
     for label, color in entries:
-        entry_w = swatch_w + int(measurer.textlength(label)) + gap
+        entry_w = swatch_w + int(measurer.textlength(label, font=font)) + gap
         if x + entry_w > width and rows[-1]:
             rows.append([])
             x = margin
@@ -408,7 +468,7 @@ def _compose_legend_canvas(
         y = height + margin + row_i * row_h
         for label, color, x in row:
             draw.rectangle([x, y + 2, x + 10, y + 12], fill=color)
-            draw.text((x + swatch_w, y), label, fill=(255, 255, 255))
+            draw.text((x + swatch_w, y), label, fill=(255, 255, 255), font=font)
     return img
 
 
@@ -462,9 +522,10 @@ def _draw_fovea_marker(img: Image.Image, col: int, top_row: int, bottom_row: int
     for y in range(top_row, bottom_row, 6):
         draw.line([(col, y), (col, min(y + 3, bottom_row))], fill=(255, 255, 255), width=1)
     label = "Fovea"
+    font = _legend_font(13)
     text_y = max(0, top_row - 16)
-    text_w = int(draw.textlength(label))
-    draw.text((min(max(col - text_w // 2, 2), img.width - text_w - 2), text_y), label, fill=(255, 255, 255))
+    text_w = int(draw.textlength(label, font=font))
+    draw.text((min(max(col - text_w // 2, 2), img.width - text_w - 2), text_y), label, fill=(255, 255, 255), font=font)
 
 
 def _draw_layer_overlay(gray: np.ndarray, boundaries: np.ndarray) -> np.ndarray:

@@ -8,6 +8,7 @@ from app.services.segmentation import (
     _detect_pathology_findings,
     _detect_pathology_zones,
     _draw_layer_overlay,
+    _legend_font,
     _track_boundaries,
     segment_layers,
 )
@@ -199,3 +200,95 @@ def test_detect_fovea_column_returns_none_without_a_real_dip():
     fovea_col = _detect_fovea_column(boundaries)
 
     assert fovea_col is None
+
+
+def test_pathology_categories_cover_the_is_os_band_no_gap():
+    """Regression test: PATHOLOGY_BOUNDARY_RANGES used to split at boundary
+    indices (0, 5) and (6, 8), leaving the IS/OS band -- boundaries[5] to
+    boundaries[6] -- uncovered by either category. A dark zone entirely
+    inside it (e.g. subretinal fluid that has pushed up against the
+    photoreceptor layer) was silently never reported by either. Caught in
+    code review (three independent review angles flagged the same gap), not
+    by the original test_detect_pathology_findings_splits_by_category, which
+    never placed a blob inside this specific band. Fixed by having both
+    ranges share boundary index 5 (IS/OS's own anatomical split point)
+    instead of skipping it.
+    """
+    height, width = 200, 300
+    band_top, band_height = 60, 60
+    gray = np.full((height, width), 0.03, dtype=np.float32)
+    gray[band_top : band_top + band_height, :] = 0.6
+    boundaries = _track_boundaries(gray)
+
+    is_os_row = int((boundaries[5].mean() + boundaries[6].mean()) / 2)
+    gray_gap = gray.copy()
+    gray_gap[is_os_row - 3 : is_os_row + 3, 120:130] = 0.05
+
+    _, masks = _detect_pathology_findings(gray_gap, boundaries)
+
+    assert masks["subretinal_fluid"][:, 120:130].any()
+
+
+def test_detect_pathology_zones_min_area_reference_uses_provided_pixel_count():
+    """Regression test: round 37 started calling _detect_pathology_zones once
+    per category over a narrower sub-band instead of once over the whole
+    retinal band. Without min_area_reference_pixels, each sub-band's smaller
+    valid.sum() would silently lower the min-blob-size noise floor purely
+    because of how the scope got divided -- not because of any change in
+    image content. min_area_reference_pixels lets a caller calibrate against
+    a caller-chosen reference (the full band) instead.
+    """
+    height, width = 100, 100
+    band = np.full((height, width), 0.6, dtype=np.float32)
+    band[40:44, 40:44] = 0.1  # a small, compact 16px blob
+
+    _, count_default = _detect_pathology_zones(band, [0, height])
+    _, count_with_large_reference = _detect_pathology_zones(band, [0, height], min_area_reference_pixels=10_000_000)
+
+    assert count_default >= 1
+    assert count_with_large_reference == 0
+
+
+def test_tracked_boundaries_never_push_the_bottom_past_true_tissue_bottom():
+    """Regression test: at a column where the tissue band's thickness changes
+    sharply, cross-column smoothing of an inner boundary could push it past
+    that column's own tissue_bottom. The monotonic-order enforcement pass
+    would then push boundaries[-1] (just reset to the true tissue_bottom) back
+    out past the real tissue edge to satisfy boundaries[-1] > boundaries[-2],
+    silently breaking _track_boundaries's own documented invariant that
+    boundaries[-1] always equals tissue_extent's bottom. Caught in code
+    review with a reproduction on a sharp interior thickness cliff -- the
+    existing boundary-containment test only excludes the image's outer edge
+    columns and never exercised an interior cliff like this one.
+    """
+    from app.ml.signal_utils import tissue_extent
+
+    height, width = 250, 300
+    top = 30
+    bottom = np.where(np.arange(width) < 150, 200, 90)  # sharp cliff at col 150
+    depth = np.arange(height)[:, None]
+    stripe = 0.5 + 0.35 * np.sin((depth - top) / 6.0)
+    band_mask = (depth >= top) & (depth < bottom[None, :])
+    gray = np.where(band_mask, stripe, 0.03).astype(np.float32)
+
+    tissue_top, tissue_bottom = tissue_extent(gray)
+    boundaries = _track_boundaries(gray)
+
+    assert (boundaries[-1] <= tissue_bottom + 1).all()
+
+
+def test_legend_font_renders_cyrillic_glyphs():
+    """Regression test: PIL's default bitmap font (used by ImageDraw.text
+    when no font is given) has no Cyrillic glyphs -- every character
+    silently renders as an unreadable box. Round 37's pathology-map legend
+    ("Выявлены"/"Не выявлены") was the first Cyrillic text ever drawn onto a
+    saved image in this module (the layer-overlay legend before it only used
+    ASCII short labels like "RPE"), so this went unnoticed until caught by
+    actually looking at the rendered PNG, not just running the existing
+    tests. Guards against the bundled font asset (app/assets/fonts/) being
+    deleted or moved without updating the loader.
+    """
+    font = _legend_font(13)
+    bbox = font.getbbox("Выявлены")
+    assert bbox is not None
+    assert bbox[2] - bbox[0] > 20  # a real glyph run, not a collapsed/missing one
