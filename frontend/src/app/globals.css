@@ -661,8 +661,12 @@ button.secondary:hover:not(:disabled) {
 
 .image-panels {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 14px;
+}
+
+.image-panel-wide {
+  grid-column: 1 / -1;
 }
 
 .bar-row {
@@ -1076,6 +1080,13 @@ button.secondary:hover:not(:disabled) {
 
   .image-panels {
     grid-template-columns: repeat(3, 1fr);
+  }
+
+  .image-panel-wide {
+    /* Keep the compact 3-up print layout (round 18 fixed a trailing-blank-page
+       PDF bug caused by tall cards) -- the on-screen "make it bigger" full-width
+       span is a screen-only affordance, not something the printed report needs. */
+    grid-column: auto;
   }
 
   .card,

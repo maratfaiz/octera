@@ -161,7 +161,7 @@ export default function StudyPage() {
                     </p>
                   )}
                 </div>
-                <div className="card">
+                <div className="card image-panel-wide">
                   <p className="card-title">
                     <span className="card-title-icon">
                       <AlertZoneIcon />
