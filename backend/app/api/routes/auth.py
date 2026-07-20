@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
@@ -42,7 +43,17 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     # under the hood so the existing studies/analysis data model doesn't need
     # to change, but nothing in the product surfaces the word "patient".
     db.add(Patient(full_name=user.full_name, created_by_id=user.id))
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Narrows a race the check above can't close on its own: two
+        # genuinely concurrent registration requests for the same email can
+        # both pass the check before either commits (User.email is unique).
+        # Without this, the second commit would raise an unhandled
+        # IntegrityError -- same class of bug as analysis.py's double-submit
+        # fix -- instead of the intended clean 409.
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Пользователь с таким email уже существует")
     db.refresh(user)
     return user
 
