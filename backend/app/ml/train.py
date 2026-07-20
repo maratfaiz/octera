@@ -1262,9 +1262,10 @@ def main() -> None:
         help="Disable shift-augmented training (round 40, real data only): by default, each "
         "(rotation+flip+brightness-augmented) real training image is supplemented with a randomly "
         "translated copy, padded with black rather than wrapped -- see README round 40. Measured across "
-        "5 split seeds against the current shipped recipe: accuracy improved in 5/5 seeds, DME precision "
-        "in 5/5, DME recall in 4/5 (flat within noise in the 5th), so it ships enabled by default; this "
-        "flag reverts to the round 30 baseline behavior.",
+        "5 split seeds against the current shipped recipe: accuracy improved in 4/5 seeds (flat in the "
+        "5th), DME precision in 4/5 (flat in the 5th), DME recall in 2/5 (flat in 2, down in 1 by less "
+        "than the metric's own cross-seed std) -- never down on accuracy or precision, so it ships "
+        "enabled by default; this flag reverts to the round 30 baseline behavior.",
     )
     parser.add_argument("--out", type=str, default=str(DEFAULT_CHECKPOINT_PATH))
     parser.add_argument(
