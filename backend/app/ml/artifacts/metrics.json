@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-07-18T06:18:40.218792+00:00",
+  "trained_at": "2026-07-20T18:47:15.976029+00:00",
   "n_train_samples_after_oversampling": 878,
   "minority_oversample_factor": 1,
   "rotation_augment_enabled": true,
@@ -8,6 +8,8 @@
   "n_train_samples_after_flip_augment": 8780,
   "brightness_augment_enabled": true,
   "n_train_samples_after_brightness_augment": 17560,
+  "shift_augment_enabled": true,
+  "n_train_samples_after_shift_augment": 35120,
   "classes": [
     "NORMAL",
     "DME"
@@ -17,96 +19,96 @@
   "n_samples": 1113,
   "selected_model": "svm_rbf_pca75",
   "cv_balanced_accuracy_by_model": {
-    "mlp_128_64": 0.8584274712414848,
-    "mlp_64": 0.8537776861196587,
-    "random_forest": 0.6803711617760362,
-    "svm_rbf": 0.8639799028267097,
-    "svm_rbf_pca30": 0.8752758938316052,
-    "svm_rbf_pca75": 0.8901346641092669
+    "mlp_128_64": 0.8725556547554735,
+    "mlp_64": 0.8696578782115633,
+    "random_forest": 0.6908404635404044,
+    "svm_rbf": 0.8804746021071603,
+    "svm_rbf_pca30": 0.8707187673501715,
+    "svm_rbf_pca75": 0.8919446201169614
   },
-  "test_accuracy": 0.9404255319148936,
+  "test_accuracy": 0.9531914893617022,
   "classification_report": {
     "DME": {
-      "precision": 0.7872340425531915,
-      "recall": 0.9024390243902439,
-      "f1-score": 0.8409090909090909,
+      "precision": 0.8571428571428571,
+      "recall": 0.8780487804878049,
+      "f1-score": 0.8674698795180723,
       "support": 41.0
     },
     "NORMAL": {
-      "precision": 0.9787234042553191,
-      "recall": 0.9484536082474226,
-      "f1-score": 0.9633507853403142,
+      "precision": 0.9740932642487047,
+      "recall": 0.9690721649484536,
+      "f1-score": 0.9715762273901809,
       "support": 194.0
     },
-    "accuracy": 0.9404255319148936,
+    "accuracy": 0.9531914893617022,
     "macro avg": {
-      "precision": 0.8829787234042553,
-      "recall": 0.9254463163188333,
-      "f1-score": 0.9021299381247025,
+      "precision": 0.9156180606957809,
+      "recall": 0.9235604727181292,
+      "f1-score": 0.9195230534541265,
       "support": 235.0
     },
     "weighted avg": {
-      "precision": 0.9453146220009054,
-      "recall": 0.9404255319148936,
-      "f1-score": 0.9419886173757178,
+      "precision": 0.9536891506685355,
+      "recall": 0.9531914893617022,
+      "f1-score": 0.9534129922295151,
       "support": 235.0
     }
   },
   "confusion_matrix": [
     [
-      184,
-      10
+      188,
+      6
     ],
     [
-      4,
-      37
+      5,
+      36
     ]
   ],
   "dme_threshold_analysis": {
     "selection_method": "thresholds chosen via 4-fold out-of-fold CV on the training split only; metrics below are the test set graded at those thresholds, not used to pick them",
     "default_threshold": 0.5,
     "best_f1_operating_point": {
-      "threshold": 0.300363017432495,
+      "threshold": 0.360236111131639,
       "classification_report": {
         "NORMAL": {
-          "precision": 0.9738219895287958,
-          "recall": 0.9587628865979382,
-          "f1-score": 0.9662337662337662,
+          "precision": 0.9692307692307692,
+          "recall": 0.9742268041237113,
+          "f1-score": 0.9717223650385605,
           "support": 194.0
         },
         "DME": {
-          "precision": 0.8181818181818182,
-          "recall": 0.8780487804878049,
-          "f1-score": 0.8470588235294118,
+          "precision": 0.875,
+          "recall": 0.8536585365853658,
+          "f1-score": 0.8641975308641975,
           "support": 41.0
         },
-        "accuracy": 0.9446808510638298,
+        "accuracy": 0.9531914893617022,
         "macro avg": {
-          "precision": 0.8960019038553071,
-          "recall": 0.9184058335428715,
-          "f1-score": 0.906646294881589,
+          "precision": 0.9221153846153847,
+          "recall": 0.9139426703545386,
+          "f1-score": 0.9179599479513789,
           "support": 235.0
         },
         "weighted avg": {
-          "precision": 0.9466677468682594,
-          "recall": 0.9446808510638298,
-          "f1-score": 0.9454415421874744,
+          "precision": 0.9527905073649755,
+          "recall": 0.9531914893617022,
+          "f1-score": 0.952962713118778,
           "support": 235.0
         }
       },
       "confusion_matrix": [
         [
-          186,
-          8
+          189,
+          5
         ],
         [
-          5,
-          36
+          6,
+          35
         ]
       ]
     },
     "high_recall_operating_point": {
-      "threshold": 0.1185806080881238,
+      "threshold": 0.12523549026156147,
       "classification_report": {
         "NORMAL": {
           "precision": 0.983957219251337,
@@ -147,8 +149,8 @@
     }
   },
   "dme_calibration_metrics": {
-    "brier_score": 0.040912253383694246,
-    "log_loss": 0.18323863735863075,
+    "brier_score": 0.040131058506835925,
+    "log_loss": 0.13353612062594253,
     "note": "round 8 tried CalibratedClassifierCV (sigmoid/isotonic) against these numbers: isotonic improves both (Brier 0.046 vs 0.053, log loss 0.14 vs 0.20 here) but makes the shipped high-recall threshold operating point worse (precision 0.58 vs 0.68 at recall 0.76 vs 0.79); sigmoid is a roughly neutral wash on both. Better average-case calibration doesn't guarantee a better specific operating point -- not shipped, see README round 8."
   },
   "multi_seed_evaluation": {
@@ -162,37 +164,38 @@
     "rotation_augment": true,
     "flip_augment": true,
     "brightness_augment": true,
+    "shift_augment": true,
     "test_accuracy": {
-      "mean": 0.958141466884243,
-      "std": 0.014076140496886567,
+      "mean": 0.9662222033445502,
+      "std": 0.011048495496941474,
       "values": [
-        0.9404255319148936,
+        0.9531914893617022,
         0.9641255605381166,
-        0.9488372093023256,
-        0.9815668202764977,
-        0.9557522123893806
+        0.9674418604651163,
+        0.9861751152073732,
+        0.9601769911504425
       ]
     },
     "dme_precision": {
-      "mean": 0.853200823395088,
-      "std": 0.08255971101362286,
+      "mean": 0.8990912765785432,
+      "std": 0.04101508613395752,
       "values": [
-        0.7872340425531915,
+        0.8571428571428571,
         0.8666666666666667,
-        0.7391304347826086,
-        0.972972972972973,
-        0.9
+        0.8947368421052632,
+        0.9736842105263158,
+        0.9032258064516129
       ]
     },
     "dme_recall": {
-      "mean": 0.851805506783986,
-      "std": 0.05906856730925735,
+      "mean": 0.8579380160728798,
+      "std": 0.05859428502769137,
       "values": [
-        0.9024390243902439,
+        0.8780487804878049,
         0.8666666666666667,
         0.7727272727272727,
-        0.9230769230769231,
-        0.7941176470588235
+        0.9487179487179487,
+        0.8235294117647058
       ]
     },
     "seeds_skipped_no_dme_in_test_fold": []
