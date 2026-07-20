@@ -354,47 +354,6 @@ def _brightness_contrast_augment(
     return out_images, out_labels, out_groups
 
 
-def _shift_augment(
-    images: list[np.ndarray],
-    labels: list[str],
-    groups: list[str] | None = None,
-    seed: int = 55,
-) -> tuple[list[np.ndarray], list[str], list[str] | None]:
-    """Adds one randomly-translated copy of every image (reusing
-    app.ml.augmentation.random_shift, previously only used for synthetic-data
-    augmentation), padding the vacated edge with black rather than wrapping
-    content around -- a real off-center photo/crop shows more dark background
-    on one side and loses content on the other, the same "phone photo of a
-    screen/printout" scenario rounds 19/23 (rotation) and 30 (brightness)
-    already built robustness for.
-
-    Round 40 tested this on top of the current recipe (rotation + flip +
-    brightness/contrast, rounds 23/29/30) across 5 split seeds: accuracy
-    improved in 5/5 seeds (mean 0.958->0.966, +0.8pp, one seed flat), DME
-    precision improved in 5/5 seeds (mean 0.853->0.899, +4.6pp), DME recall
-    improved in 4/5 seeds and was flat within noise in the other (mean
-    0.852->0.858; the one dip, -2.4pp on seed 42, is smaller than the
-    recall metric's own 6.6pp cross-seed std) -- a cleaner result than round
-    23's own accepted rotation trade-off, so this ships enabled by default.
-
-    A fixed RNG seed (independent of the split seed, and distinct from
-    _brightness_contrast_augment's, so the two stages don't accidentally
-    draw the same perturbation stream) makes the shipped checkpoint's exact
-    augmented pixels reproducible run to run, matching every other
-    augmentation stage above. Each shifted copy keeps its source's group for
-    the same patient-leakage reason as every other augmentation stage above.
-    """
-    rng = np.random.default_rng(seed)
-    out_images, out_labels = list(images), list(labels)
-    out_groups = list(groups) if groups is not None else None
-    for idx, (img, label) in enumerate(zip(images, labels)):
-        out_images.append(random_shift(img, rng))
-        out_labels.append(label)
-        if out_groups is not None:
-            out_groups.append(groups[idx])
-    return out_images, out_labels, out_groups
-
-
 def _apply_augmentation_stage(
     images: list[np.ndarray],
     labels: list[str],
@@ -423,6 +382,55 @@ def _apply_augmentation_stage(
     X = np.concatenate([X_existing, X_new])
     y = np.array(labels)
     return images, labels, groups_out, X, y
+
+
+def _apply_terminal_augmentation_stage(
+    images: list[np.ndarray],
+    labels: list[str],
+    groups: list[str] | np.ndarray | None,
+    X_existing: np.ndarray,
+    single_image_augment_fn,
+    stage_name: str,
+    seed: int,
+) -> tuple[list[str], np.ndarray | None, np.ndarray, np.ndarray]:
+    """Like `_apply_augmentation_stage`, but for a stage that is known to be
+    the LAST augmentation applied in the recipe -- since no further stage
+    needs the augmented copies' raw pixels (only their extracted features),
+    this never materializes a second full doubled raw-image list.
+
+    `_apply_augmentation_stage` returns `images` (the doubled raw-pixel
+    list) so the next stage can augment on top of it -- exactly what
+    rotation/flip/brightness need, chaining onto each other. But applied to
+    a 4th stage (round 40, shift), that doubling pushed the select phase's
+    ~17560-image training split to ~35000 raw grayscale images at native
+    resolution -- ~27GB of pixel data alone, which does not fit this
+    project's 15GB training machine regardless of what happens afterward
+    (confirmed via a real OOM kill, dmesg: anon-rss at the machine's
+    ceiling, mid-augmentation). This is exactly the same failure mode round
+    38 hit and fixed in its own throwaway multi-seed experiment script --
+    holding two full raw-image lists (original + doubled) at once -- just
+    now hit by the real training pipeline itself once a 4th stage was added.
+
+    Instead, this extracts each augmented copy's features one image at a
+    time straight into a feature vector, discarding the augmented pixel
+    array immediately, and never appends to `images` at all -- peak memory
+    stays at roughly the *single* (not doubled) raw-image list already held
+    by the caller, plus the existing feature matrix (a few hundred MB, not
+    tens of GB). Every caller of this function must already be at the end of
+    its augmentation chain, since the returned tuple has no `images` for a
+    further stage to build on.
+    """
+    rng = np.random.default_rng(seed)
+    n_before = len(images)
+    new_features = [extract_features(Image.fromarray(single_image_augment_fn(img, rng))) for img in images]
+    X_new = np.stack(new_features)
+    del new_features
+    X = np.concatenate([X_existing, X_new])
+    labels_out = list(labels) + list(labels)
+    groups_out = np.concatenate([groups, groups]) if groups is not None else None
+    y = np.array(labels_out)
+    print(f"{stage_name}: {n_before} -> {n_before * 2} images (terminal stage, features extracted one at a time)")
+    return labels_out, groups_out, X, y
 
 
 def _select_thresholds(y_true: np.ndarray, dme_proba: np.ndarray, min_recall: float = 0.85) -> dict:
@@ -535,11 +543,24 @@ def _multi_seed_worker_evaluate(
         train_images, train_labels, _ = _flip_augment(train_images, train_labels)
     if brightness_augment:
         train_images, train_labels, _ = _brightness_contrast_augment(train_images, train_labels)
-    if shift_augment:
-        train_images, train_labels, _ = _shift_augment(train_images, train_labels)
 
     X_train_seed = np.stack([extract_features(Image.fromarray(img)) for img in train_images])
     y_train_seed = np.array(train_labels)
+    if shift_augment:
+        # Terminal stage (round 40): extracts shift-augmented features one image at a
+        # time rather than doubling train_images itself -- see
+        # _apply_terminal_augmentation_stage's docstring for the OOM this avoids.
+        train_labels, _, X_train_seed, y_train_seed = _apply_terminal_augmentation_stage(
+            train_images,
+            train_labels,
+            None,
+            X_train_seed,
+            random_shift,
+            "Shift-augmented training split (round 40)",
+            seed=55,
+        )
+    del train_images
+
     X_test_seed = np.stack([extract_features(Image.fromarray(raw_images[i])) for i in test_idx])
     y_all = np.array(labels)
 
@@ -828,12 +849,26 @@ def _run_select_phase(args: argparse.Namespace) -> dict:
     fits (6 candidates x 4 CV folds, plus the final fit) inside this one
     process with no further isolation -- the same numpy/BLAS/libsvm memory-
     retention behavior blamed for the multi-seed OOM applies here too, just
-    with more budget before it bites. A future augmentation stage stacked on
-    top of rotation+flip+brightness could plausibly push this phase's own
-    peak past whatever a single subprocess has available, at which point
-    isolating it further (splitting select_best_model's own candidate loop
-    across subprocesses, mirroring _multi_seed_evaluation) would be the next
-    round's fix, not a new problem.
+    with more budget before it bites.
+
+    Round 40 hit exactly the predicted failure: adding a 4th augmentation
+    stage (shift) via the same doubling pattern as rotation/flip/brightness
+    pushed the ~17560-image training split to ~35000 raw grayscale images at
+    native resolution -- confirmed via dmesg (Killed process ..., anon-rss at
+    the machine's 15GB ceiling) mid-augmentation, before select_best_model
+    even started. The fix wasn't isolating select_best_model's candidate
+    loop (that would only have helped if the augmented *feature matrix* were
+    the problem; it's tiny). The real cost was the raw *pixel* list: shift is
+    always the last stage in the recipe, and nothing downstream needs its
+    augmented copies' raw pixels, only their features -- so it's applied via
+    `_apply_terminal_augmentation_stage`, which extracts each copy's features
+    one image at a time and never doubles the raw-image list at all (the
+    same fix round 38 used for its own throwaway experiment script, now
+    applied to the real pipeline). A future 5th stage that also needs to be
+    terminal would need the same treatment; a future NON-terminal stage
+    added after today's shift would need shift converted back to the
+    doubling `_apply_augmentation_stage` pattern, since only the actual last
+    stage in the chain can skip materializing its raw output.
 
     Returns a JSON-serializable dict of everything the orchestrator needs for
     the final model card. Does NOT save a checkpoint unless minority-oversample
@@ -901,15 +936,21 @@ def _run_select_phase(args: argparse.Namespace) -> dict:
 
     shift_augmented = not args.no_shift_augment
     if shift_augmented:
-        images_train, labels_train, groups_train, X_train, y_train = _apply_augmentation_stage(
+        labels_train, groups_train, X_train, y_train = _apply_terminal_augmentation_stage(
             images_train,
             labels_train,
             groups_train,
             X_train,
-            _shift_augment,
+            random_shift,
             "Shift-augmented training split (round 40)",
+            seed=55,
         )
-    n_train_after_shift_augment = len(images_train)
+    n_train_after_shift_augment = len(labels_train)
+    # images_train no longer matches y_train/X_train once the terminal stage above
+    # doubled labels/features without doubling the raw-pixel list (that's the whole
+    # memory-saving point) -- freed here rather than left sitting at ~13.5GB across
+    # the ~21 sequential fits select_best_model is about to run.
+    del images_train
 
     print("Selecting best model via cross-validation on the training split:")
     best_name, best_estimator, cv_scores = select_best_model(X_train, y_train, groups=groups_train)
@@ -1039,9 +1080,12 @@ def _run_final_refit_phase(args: argparse.Namespace) -> None:
             "Brightness/contrast-augmented full dataset for final refit",
         )
     if not args.no_shift_augment:
-        full_images, full_labels, _, X_full, y_full = _apply_augmentation_stage(
-            full_images, full_labels, None, X_full, _shift_augment, "Shift-augmented full dataset for final refit"
+        # Terminal stage (round 40): see _apply_terminal_augmentation_stage's docstring
+        # for the OOM this avoids by not doubling full_images itself.
+        full_labels, _, X_full, y_full = _apply_terminal_augmentation_stage(
+            full_images, full_labels, None, X_full, random_shift, "Shift-augmented full dataset for final refit", seed=55
         )
+    del full_images
 
     estimator = _candidate_estimators()[args.estimator_name]
     model = OCTClassifier(estimator)
