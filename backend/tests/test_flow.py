@@ -92,6 +92,27 @@ def test_analysis_history_lists_own_results_only(client):
     assert resp_b.json() == []
 
 
+def test_running_analysis_twice_on_the_same_study_returns_a_clean_conflict(client):
+    """Regression test: without a pre-existing-result check, a second /run
+    call used to re-run the whole pipeline and then fail at the DB insert
+    with an unhandled IntegrityError (AnalysisResult.study_id is unique),
+    leaving the study stuck in "processing" forever with no clean error --
+    the study page has no retry/timeout, it would just wait indefinitely.
+    """
+    headers = _register_and_login(client, email="double_run@example.com")
+    study_resp = _upload_test_study(client, headers)
+    study_id = study_resp.json()["id"]
+
+    first = client.post(f"/api/v1/analysis/{study_id}/run", headers=headers)
+    assert first.status_code == 201
+
+    second = client.post(f"/api/v1/analysis/{study_id}/run", headers=headers)
+    assert second.status_code == 409
+
+    study = client.get(f"/api/v1/studies/{study_id}", headers=headers)
+    assert study.json()["status"] == "completed"
+
+
 def test_users_cannot_access_each_others_studies(client):
     headers_a = _register_and_login(client, email="user_a@example.com")
     headers_b = _register_and_login(client, email="user_b@example.com")
