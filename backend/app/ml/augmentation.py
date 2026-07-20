@@ -36,7 +36,7 @@ def speckle_noise(img: np.ndarray, rng: np.random.Generator, amount: float = 0.1
 
 def jpeg_artifacts(img: np.ndarray, rng: np.random.Generator, quality_range: tuple[int, int] = (30, 70)) -> np.ndarray:
     """Re-encodes through a low-quality JPEG round-trip, introducing real
-    blocking/ringing compression artifacts -- not tried before (round 38
+    blocking/ringing compression artifacts -- not tried before (round 39
     exploratory check, see README) despite matching the exact "phone photo of
     a screen/printout" scenario rounds 19/23 (rotation) and 30 (brightness)
     already built robustness for: a photo of a physical printout or another
@@ -51,10 +51,28 @@ def jpeg_artifacts(img: np.ndarray, rng: np.random.Generator, quality_range: tup
 
 
 def random_shift(img: np.ndarray, rng: np.random.Generator, max_frac: float = 0.08) -> np.ndarray:
+    """Translates the image, padding the vacated edge with black (0) rather
+    than wrapping content around from the opposite edge.
+
+    An earlier version used np.roll (circular wrap), which doesn't model any
+    real acquisition variation: a real off-center photo/crop shows more dark
+    background on one side and loses content on the other, it doesn't teleport
+    pixels from the far edge to the near one. Round-tripping through a wrap
+    would hand the classifier a wrap seam artifact that never occurs in a real
+    upload -- caught in code review, fixed to pad instead (round 40 then
+    tested this fixed version as a real-data augmentation candidate).
+    """
     height, width = img.shape
     dy = int(rng.uniform(-max_frac, max_frac) * height)
     dx = int(rng.uniform(-max_frac, max_frac) * width)
-    return np.roll(np.roll(img, dy, axis=0), dx, axis=1)
+
+    out = np.zeros_like(img)
+    src_y0, src_y1 = max(0, -dy), min(height, height - dy)
+    dst_y0, dst_y1 = max(0, dy), min(height, height + dy)
+    src_x0, src_x1 = max(0, -dx), min(width, width - dx)
+    dst_x0, dst_x1 = max(0, dx), min(width, width + dx)
+    out[dst_y0:dst_y1, dst_x0:dst_x1] = img[src_y0:src_y1, src_x0:src_x1]
+    return out
 
 
 def augment(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
