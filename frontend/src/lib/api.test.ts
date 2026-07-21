@@ -55,4 +55,23 @@ describe("auth.login", () => {
     await expect(auth.login("test@example.com", "wrong")).rejects.toThrow("Неверный email или пароль");
     expect(getToken()).toBeNull();
   });
+
+  it("extracts a readable message from FastAPI's array-shaped 422 validation detail", async () => {
+    // FastAPI's own pydantic validation errors send `detail` as an array of
+    // {loc, msg, type} objects, not a string -- passed through unchecked, the
+    // Error base class's string coercion turns that into "[object Object]".
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: [{ loc: ["body", "email"], msg: "field required", type: "value_error.missing" }],
+          }),
+          { status: 422 },
+        ),
+      ),
+    );
+
+    await expect(auth.login("test@example.com", "wrong")).rejects.toThrow("field required");
+  });
 });

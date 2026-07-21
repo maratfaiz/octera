@@ -86,10 +86,23 @@ export default function HistoryPage() {
   // real progression. Only offer the OD/OS split once a patient actually has
   // both on file; single-eye patients (the common case) see the trends
   // unfiltered, exactly as before this feature existed.
-  const availableEyes = Array.from(new Set(history.map((h) => h.eye).filter((e): e is string => e !== null))).sort(
-    (a, b) => (EYE_ORDER[a] ?? 99) - (EYE_ORDER[b] ?? 99)
-  );
-  const trendHistory = availableEyes.length > 1 ? history.filter((h) => h.eye === selectedEye) : history;
+  //
+  // "Only one distinct eye" must count null (untagged upload, no eye
+  // specified) as its own bucket alongside any real eye code, not silently
+  // drop it -- otherwise a patient with e.g. some OD-tagged studies and some
+  // untagged ones (which could easily be the other eye) hits availableEyes.length
+  // === 1 and falls into the unfiltered branch, mixing the same "alternating
+  // eyes" problem this filter exists to prevent.
+  const distinctEyeBuckets = new Set(history.map((h) => h.eye));
+  const availableEyes = Array.from(distinctEyeBuckets)
+    .filter((e): e is string => e !== null)
+    .sort((a, b) => (EYE_ORDER[a] ?? 99) - (EYE_ORDER[b] ?? 99));
+  // Untagged uploads (eye === null) are their own bucket in the toggle too --
+  // shown last, after the real eye codes -- so they stay selectable instead of
+  // being invisibly absorbed into whichever real eye happens to be selected.
+  const eyeToggleOptions: (string | null)[] = distinctEyeBuckets.has(null) ? [...availableEyes, null] : availableEyes;
+  const showEyeSplit = distinctEyeBuckets.size > 1;
+  const trendHistory = showEyeSplit ? history.filter((h) => h.eye === selectedEye) : history;
 
   // Each layer gets its own min/max-normalized 0..1 series -- raw thickness values
   // live on very different absolute scales per layer (a few microns vs. over a
@@ -130,22 +143,28 @@ export default function HistoryPage() {
             </div>
           )}
 
-          {!loading && availableEyes.length > 1 && (
+          {!loading && showEyeSplit && (
             <div className="eye-toggle" style={{ maxWidth: 280 }}>
-              {availableEyes.map((eyeOption) => (
+              {eyeToggleOptions.map((eyeOption) => (
                 <button
-                  key={eyeOption}
+                  key={eyeOption ?? "unspecified"}
                   type="button"
                   className={`eye-toggle-option ${selectedEye === eyeOption ? "active" : ""}`}
                   onClick={() => setSelectedEye(eyeOption)}
                 >
-                  {eyeOption === "OD" ? "OD · правый" : eyeOption === "OS" ? "OS · левый" : eyeOption}
+                  {eyeOption === "OD"
+                    ? "OD · правый"
+                    : eyeOption === "OS"
+                      ? "OS · левый"
+                      : eyeOption === null
+                        ? "Без указания глаза"
+                        : eyeOption}
                 </button>
               ))}
             </div>
           )}
 
-          {!loading && availableEyes.length > 1 && trendHistory.length < 2 && (
+          {!loading && showEyeSplit && trendHistory.length < 2 && (
             <p style={{ color: "var(--ink-soft)", fontSize: 13, marginBottom: 20 }}>
               Недостаточно снимков этого глаза для графика динамики — нужно хотя бы два.
             </p>

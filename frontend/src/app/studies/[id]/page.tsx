@@ -38,31 +38,72 @@ export default function StudyPage() {
       router.replace("/login");
       return;
     }
-    load();
-  }, [id, router]);
+    // `cancelled` guards against a slower fetch for a previous `id` resolving
+    // after navigation to a new study and overwriting this page with the
+    // wrong study's data -- Next.js reuses this component instance across
+    // dynamic [id] navigations, so a fresh `load()` call alone doesn't stop
+    // an in-flight one from a prior id.
+    let cancelled = false;
+    const objectUrls: string[] = [];
 
-  async function load() {
-    try {
-      const s = await studies.get(id);
-      setStudy(s);
-      setImageUrl(await fetchImageObjectUrl(`/api/v1/studies/${id}/image`));
+    async function load() {
+      setLoading(true);
+      setError(null);
+      setStudy(null);
+      setResult(null);
+      setImageUrl(null);
+      setSegmentationUrl(null);
+      setPathologyUrl(null);
+      try {
+        const s = await studies.get(id);
+        if (cancelled) return;
+        setStudy(s);
+        const img = await fetchImageObjectUrl(`/api/v1/studies/${id}/image`);
+        if (cancelled) {
+          URL.revokeObjectURL(img);
+          return;
+        }
+        objectUrls.push(img);
+        setImageUrl(img);
 
-      if (s.status === "completed") {
-        const r = await analysis.get(id);
-        setResult(r);
-        if (r.segmentation_map_path) {
-          setSegmentationUrl(await fetchImageObjectUrl(`/api/v1/analysis/${id}/segmentation-map`));
+        if (s.status === "completed") {
+          const r = await analysis.get(id);
+          if (cancelled) return;
+          setResult(r);
+          if (r.segmentation_map_path) {
+            const seg = await fetchImageObjectUrl(`/api/v1/analysis/${id}/segmentation-map`);
+            if (cancelled) {
+              URL.revokeObjectURL(seg);
+              return;
+            }
+            objectUrls.push(seg);
+            setSegmentationUrl(seg);
+          }
+          if (r.pathology_map_path) {
+            const path = await fetchImageObjectUrl(`/api/v1/analysis/${id}/pathology-map`);
+            if (cancelled) {
+              URL.revokeObjectURL(path);
+              return;
+            }
+            objectUrls.push(path);
+            setPathologyUrl(path);
+          }
         }
-        if (r.pathology_map_path) {
-          setPathologyUrl(await fetchImageObjectUrl(`/api/v1/analysis/${id}/pathology-map`));
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Не удалось загрузить исследование");
         }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось загрузить исследование");
-    } finally {
-      setLoading(false);
     }
-  }
+    load();
+
+    return () => {
+      cancelled = true;
+      objectUrls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [id, router]);
 
   const maxLayerValue = result ? Math.max(...Object.values(result.layer_thickness), 1) : 1;
   const sortedDiagnoses = result ? [...result.diagnoses].sort((a, b) => b.probability - a.probability) : [];

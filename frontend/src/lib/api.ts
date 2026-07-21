@@ -38,6 +38,18 @@ class ApiError extends Error {
   }
 }
 
+// FastAPI's own validation errors (422) send `detail` as an array of
+// {loc, msg, type} objects rather than a string -- passed through unchecked,
+// Error's string coercion turns that into an unreadable "[object Object]".
+function extractErrorMessage(detail: unknown): string | undefined {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((d) => (d && typeof d === "object" && "msg" in d ? String(d.msg) : String(d)));
+    return messages.length > 0 ? messages.join("; ") : undefined;
+  }
+  return undefined;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers = new Headers(options.headers);
@@ -49,7 +61,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.detail ?? `Ошибка запроса: ${res.status}`);
+    throw new ApiError(res.status, extractErrorMessage(body.detail) ?? `Ошибка запроса: ${res.status}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
