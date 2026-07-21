@@ -18,14 +18,27 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     setLoading(true);
+    let registered = false;
     try {
       if (mode === "register") {
         await auth.register(email, fullName, password);
+        registered = true;
       }
       await auth.login(email, password);
       router.push("/dashboard");
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось выполнить вход");
+      const message = err instanceof ApiError ? err.message : "Не удалось выполнить вход";
+      if (registered) {
+        // The account was created; only the follow-up login call failed
+        // (network blip, etc). Resubmitting "Зарегистрироваться" now would
+        // hit a 409 "already exists" that reads as if registration itself
+        // failed -- switch to login mode instead so the user's next
+        // submission actually retries the thing that failed.
+        setMode("login");
+        setError(`Аккаунт создан, но не удалось выполнить вход автоматически (${message}). Попробуйте войти.`);
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -89,7 +102,10 @@ export default function LoginPage() {
           <button
             className="secondary"
             style={{ width: "100%" }}
-            onClick={() => setMode(mode === "login" ? "register" : "login")}
+            onClick={() => {
+              setMode(mode === "login" ? "register" : "login");
+              setError(null);
+            }}
           >
             {mode === "login" ? "Нет аккаунта? Зарегистрироваться" : "Уже есть аккаунт? Войти"}
           </button>

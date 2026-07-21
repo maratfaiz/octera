@@ -60,6 +60,15 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (!res.ok) {
+    // Only treat a 401 as "your session expired" when a token was actually
+    // sent and rejected -- auth.login/auth.register are called with no
+    // token yet (the user isn't authenticated at all), so a 401 there means
+    // "wrong password"/"invalid credentials", not an expired session, and
+    // must not force-redirect a user who's already sitting on /login.
+    if (res.status === 401 && token) {
+      clearToken();
+      if (typeof window !== "undefined") window.location.href = "/login";
+    }
     const body = await res.json().catch(() => ({}));
     throw new ApiError(res.status, extractErrorMessage(body.detail) ?? `Ошибка запроса: ${res.status}`);
   }
@@ -106,7 +115,13 @@ export async function fetchImageObjectUrl(path: string): Promise<string> {
   const headers = new Headers();
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(`${API_URL}${path}`, { headers });
-  if (!res.ok) throw new ApiError(res.status, "Не удалось загрузить изображение");
+  if (!res.ok) {
+    if (res.status === 401 && token) {
+      clearToken();
+      if (typeof window !== "undefined") window.location.href = "/login";
+    }
+    throw new ApiError(res.status, "Не удалось загрузить изображение");
+  }
   const blob = await res.blob();
   return URL.createObjectURL(blob);
 }

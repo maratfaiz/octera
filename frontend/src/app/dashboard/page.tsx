@@ -70,15 +70,26 @@ export default function DashboardPage() {
     if (!file) return;
     setUploading(true);
     setError(null);
+    let study;
     try {
-      const study = await studies.upload(file, eye);
-      await analysis.run(study.id);
-      router.push(`/studies/${study.id}`);
+      study = await studies.upload(file, eye);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Не удалось загрузить снимок или выполнить анализ");
-    } finally {
+      setError(err instanceof ApiError ? err.message : "Не удалось загрузить снимок");
       setUploading(false);
+      return;
     }
+    // The study record already exists at this point -- if the analysis
+    // pipeline itself fails (network blip, backend exception), navigate to
+    // it anyway rather than stranding the user on the dashboard with a
+    // generic error and no link back, which used to leave them likely to
+    // re-upload the same file as a duplicate study.
+    try {
+      await analysis.run(study.id);
+    } catch {
+      // Swallowed deliberately: the study page shows its own status
+      // ("failed"/"processing") from the study record itself.
+    }
+    router.push(`/studies/${study.id}`);
   }
 
   return (
