@@ -2,6 +2,7 @@ import numpy as np
 
 from app.ml.augmentation import (
     augment,
+    gaussian_blur,
     jpeg_artifacts,
     random_brightness_contrast,
     random_flip,
@@ -24,7 +25,14 @@ def test_individual_transforms_stay_in_valid_range():
     rng = np.random.default_rng(1)
     img = (rng.uniform(0, 1, size=(64, 64)) * 255).astype(np.uint8)
 
-    for transform in (random_flip, random_brightness_contrast, speckle_noise, random_shift, jpeg_artifacts):
+    for transform in (
+        random_flip,
+        random_brightness_contrast,
+        speckle_noise,
+        random_shift,
+        jpeg_artifacts,
+        gaussian_blur,
+    ):
         out = transform(img, rng)
         assert out.shape == img.shape
         assert out.min() >= 0 and out.max() <= 255
@@ -40,6 +48,19 @@ def test_jpeg_artifacts_actually_changes_pixels():
     img = (rng.uniform(0, 1, size=(96, 96)) * 255).astype(np.uint8)
 
     out = jpeg_artifacts(img, rng, quality_range=(10, 10))
+
+    assert not np.array_equal(out, img)
+
+
+def test_gaussian_blur_actually_changes_pixels():
+    """A meaningful blur radius should perturb at least some pixels -- if this
+    ever passed with an unchanged image, the filter would have silently
+    become a no-op (e.g. radius clamped to 0 or the filter never applied).
+    """
+    rng = np.random.default_rng(3)
+    img = (rng.uniform(0, 1, size=(96, 96)) * 255).astype(np.uint8)
+
+    out = gaussian_blur(img, rng, radius_range=(2.0, 2.0))
 
     assert not np.array_equal(out, img)
 

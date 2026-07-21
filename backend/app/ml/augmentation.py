@@ -7,7 +7,7 @@ Kept dependency-free of heavy vision libraries (torchvision/albumentations);
 import io
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 
 
 def rotate(img: np.ndarray, degrees: float) -> np.ndarray:
@@ -73,6 +73,18 @@ def random_shift(img: np.ndarray, rng: np.random.Generator, max_frac: float = 0.
     dst_x0, dst_x1 = max(0, dx), min(width, width + dx)
     out[dst_y0:dst_y1, dst_x0:dst_x1] = img[src_y0:src_y1, src_x0:src_x1]
     return out
+
+
+def gaussian_blur(img: np.ndarray, rng: np.random.Generator, radius_range: tuple[float, float] = (0.5, 2.0)) -> np.ndarray:
+    """Applies a randomized Gaussian blur, using PIL's built-in filter (no new
+    dependency) -- not tried before (round 42 exploratory check, see README)
+    despite matching the same "phone photo of a screen/printout" scenario
+    rounds 19/23 (rotation), 30 (brightness), and 40 (shift) already built
+    robustness for: a real photo taken by hand is plausibly out of focus or
+    slightly motion-blurred, unlike the dataset's own direct digital exports.
+    """
+    radius = float(rng.uniform(radius_range[0], radius_range[1]))
+    return np.array(Image.fromarray(img).filter(ImageFilter.GaussianBlur(radius=radius)))
 
 
 def augment(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
