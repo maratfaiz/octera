@@ -6,6 +6,7 @@ from app.ml.augmentation import (
     jpeg_artifacts,
     random_brightness_contrast,
     random_flip,
+    random_perspective,
     random_shift,
     speckle_noise,
 )
@@ -32,6 +33,7 @@ def test_individual_transforms_stay_in_valid_range():
         random_shift,
         jpeg_artifacts,
         gaussian_blur,
+        random_perspective,
     ):
         out = transform(img, rng)
         assert out.shape == img.shape
@@ -63,6 +65,50 @@ def test_gaussian_blur_actually_changes_pixels():
     out = gaussian_blur(img, rng, radius_range=(2.0, 2.0))
 
     assert not np.array_equal(out, img)
+
+
+def test_random_perspective_actually_changes_pixels():
+    """A meaningful warp should perturb at least some pixels -- if this ever
+    passed with an unchanged image, the coefficient solve or the transform
+    call would have silently become a no-op (e.g. all corner offsets zero).
+    """
+    rng = np.random.default_rng(4)
+    img = (rng.uniform(0, 1, size=(96, 96)) * 255).astype(np.uint8)
+
+    out = random_perspective(img, rng, max_warp_frac=0.1)
+
+    assert not np.array_equal(out, img)
+
+
+def test_random_perspective_pads_vacated_region_with_black():
+    """The vacated region left by the warp must be padded black (matching
+    random_shift's "lost content" reasoning), not wrapped, stretched, or left
+    uninitialized.
+
+    A fixed RNG returning the same value for all 8 calls (one per corner's x
+    and y offset) degenerates the warp into a pure translation -- every
+    source corner shifts by the identical (+max_warp_frac*w, +max_warp_frac*h)
+    -- which makes the outcome exactly predictable: output pixel (x, y) reads
+    input pixel (x + offset, y + offset), so only the far bottom-right strip
+    (offset pixels wide/tall) samples outside the source image and must be
+    black; everything else stays the solid source color.
+    """
+    height, width = 100, 100
+    img = np.full((height, width), 255, dtype=np.uint8)  # solid bright frame
+
+    class _FixedRng:
+        def uniform(self, low, high):
+            return high
+
+    max_warp_frac = 0.2
+    out = random_perspective(img, _FixedRng(), max_warp_frac=max_warp_frac)
+    offset = int(max_warp_frac * width)
+
+    assert out.dtype == np.uint8
+    assert out.shape == img.shape
+    assert (out[: height - offset, : width - offset] == 255).all()
+    assert (out[height - offset :, :] == 0).all()
+    assert (out[:, width - offset :] == 0).all()
 
 
 def test_random_shift_pads_instead_of_wrapping():

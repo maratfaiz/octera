@@ -87,6 +87,50 @@ def gaussian_blur(img: np.ndarray, rng: np.random.Generator, radius_range: tuple
     return np.array(Image.fromarray(img).filter(ImageFilter.GaussianBlur(radius=radius)))
 
 
+def _perspective_coeffs(dst: list[tuple[float, float]], src: list[tuple[float, float]]) -> np.ndarray:
+    """Solves for the 8 coefficients PIL's Image.transform(..., Image.PERSPECTIVE, ...)
+    needs to map each `dst` (output canvas) corner to the corresponding `src`
+    (source image) corner -- the standard homography linear system, not
+    provided by PIL itself.
+    """
+    matrix = []
+    for (x, y), (sx, sy) in zip(dst, src):
+        matrix.append([x, y, 1, 0, 0, 0, -sx * x, -sx * y])
+        matrix.append([0, 0, 0, x, y, 1, -sy * x, -sy * y])
+    a = np.array(matrix, dtype=np.float64)
+    b = np.array(src, dtype=np.float64).reshape(8)
+    return np.linalg.solve(a, b)
+
+
+def random_perspective(img: np.ndarray, rng: np.random.Generator, max_warp_frac: float = 0.06) -> np.ndarray:
+    """Applies a mild random perspective (keystone) warp -- not tried before
+    (round 44 exploratory check, see README) despite matching the same "phone
+    photo of a screen/printout" scenario rounds 19/23 (rotation) and 40
+    (shift) already built robustness for: a real handheld photo is rarely
+    taken perfectly perpendicular to the screen/printout, which produces a
+    trapezoidal keystone distortion that pure rotation doesn't model (rotation
+    keeps parallel lines parallel; a perspective warp doesn't).
+
+    Each of the 4 image corners is independently displaced inward by up to
+    `max_warp_frac` of the image's own width/height, then that perturbed
+    quadrilateral is mapped back onto the full output canvas -- the vacated
+    regions fill with black (PIL's fillcolor), the same "lost content, more
+    dark background" reasoning as random_shift rather than wrapping or
+    stretching artifacts.
+    """
+    height, width = img.shape
+    corners = [(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)]
+    src = [
+        (x + rng.uniform(-max_warp_frac, max_warp_frac) * width, y + rng.uniform(-max_warp_frac, max_warp_frac) * height)
+        for x, y in corners
+    ]
+    coeffs = _perspective_coeffs(corners, src)
+    out = Image.fromarray(img).transform(
+        (width, height), Image.PERSPECTIVE, coeffs, resample=Image.BILINEAR, fillcolor=0
+    )
+    return np.array(out)
+
+
 def augment(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     img = random_flip(img, rng)
     img = random_shift(img, rng)
