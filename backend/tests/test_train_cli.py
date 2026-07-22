@@ -27,6 +27,7 @@ def _base_args(**overrides) -> argparse.Namespace:
         no_flip_augment=False,
         no_brightness_augment=False,
         no_shift_augment=False,
+        no_perspective_augment=False,
         minority_oversample=1,
     )
     defaults.update(overrides)
@@ -41,6 +42,16 @@ def test_phase_subprocess_cmd_forwards_no_shift_augment_when_set():
 def test_phase_subprocess_cmd_omits_no_shift_augment_by_default():
     cmd = _phase_subprocess_cmd(_base_args())
     assert "--no-shift-augment" not in cmd
+
+
+def test_phase_subprocess_cmd_forwards_no_perspective_augment_when_set():
+    cmd = _phase_subprocess_cmd(_base_args(no_perspective_augment=True))
+    assert "--no-perspective-augment" in cmd
+
+
+def test_phase_subprocess_cmd_omits_no_perspective_augment_by_default():
+    cmd = _phase_subprocess_cmd(_base_args())
+    assert "--no-perspective-augment" not in cmd
 
 
 def _run(*args: str) -> subprocess.CompletedProcess:

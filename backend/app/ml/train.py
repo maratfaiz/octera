@@ -60,6 +60,7 @@ from scipy.sparse.csgraph import connected_components
 
 from app.ml.augmentation import augment as augment_image
 from app.ml.augmentation import random_brightness_contrast
+from app.ml.augmentation import random_perspective
 from app.ml.augmentation import random_shift
 from app.ml.augmentation import rotate as rotate_image
 from app.ml.features import extract_features
@@ -384,53 +385,42 @@ def _apply_augmentation_stage(
     return images, labels, groups_out, X, y
 
 
-def _apply_terminal_augmentation_stage(
-    images: list[np.ndarray],
-    labels: list[str],
-    groups: list[str] | np.ndarray | None,
-    X_existing: np.ndarray,
-    single_image_augment_fn,
-    stage_name: str,
-    seed: int,
-) -> tuple[list[str], np.ndarray | None, np.ndarray, np.ndarray]:
-    """Like `_apply_augmentation_stage`, but for a stage that is known to be
-    the LAST augmentation applied in the recipe -- since no further stage
-    needs the augmented copies' raw pixels (only their extracted features),
-    this never materializes a second full doubled raw-image list.
+def _extract_sibling_augmentation_features(
+    images: list[np.ndarray], single_image_augment_fn, seed: int, stage_name: str
+) -> np.ndarray:
+    """Extracts one new "sibling" augmentation group's features from `images`
+    -- the training split's raw-pixel list AFTER rotation/flip/brightness
+    (which chain onto each other) but never itself doubled by this function.
 
-    `_apply_augmentation_stage` returns `images` (the doubled raw-pixel
-    list) so the next stage can augment on top of it -- exactly what
-    rotation/flip/brightness need, chaining onto each other. But applied to
-    a 4th stage (round 40, shift), that doubling pushed the select phase's
-    ~17560-image training split to ~35000 raw grayscale images at native
-    resolution -- ~27GB of pixel data alone, which does not fit this
-    project's 15GB training machine regardless of what happens afterward
-    (confirmed via a real OOM kill, dmesg: anon-rss at the machine's
-    ceiling, mid-augmentation). This is exactly the same failure mode round
-    38 hit and fixed in its own throwaway multi-seed experiment script --
-    holding two full raw-image lists (original + doubled) at once -- just
-    now hit by the real training pipeline itself once a 4th stage was added.
+    `_apply_augmentation_stage` (rotation/flip/brightness) returns the
+    doubled raw-pixel list so the next stage can build on top of it. But
+    once a stage's job is to add a "sibling" group -- a parallel variant of
+    the SAME base images, not a further transform of the previous stage's
+    output -- doubling that list stops being free: applied as a 4th stage
+    (round 40, shift), it pushed the select phase's ~17560-image training
+    split to ~35000 raw grayscale images at native resolution -- ~27GB of
+    pixel data alone, which does not fit this project's 15GB training
+    machine regardless of what happens afterward (confirmed via a real OOM
+    kill, dmesg: anon-rss at the machine's ceiling, mid-augmentation). Same
+    failure mode round 38 hit and fixed in its own throwaway experiment
+    script -- holding two full raw-image lists at once -- now hit by the
+    real pipeline once a 4th stage was added.
 
-    Instead, this extracts each augmented copy's features one image at a
-    time straight into a feature vector, discarding the augmented pixel
-    array immediately, and never appends to `images` at all -- peak memory
-    stays at roughly the *single* (not doubled) raw-image list already held
-    by the caller, plus the existing feature matrix (a few hundred MB, not
-    tens of GB). Every caller of this function must already be at the end of
-    its augmentation chain, since the returned tuple has no `images` for a
-    further stage to build on.
+    Instead, this extracts each sibling copy's features one image at a time
+    straight into a feature vector, discarding the augmented pixel array
+    immediately, and never appends to `images` at all -- peak memory stays
+    at roughly the *single* base raw-image list the caller already holds,
+    plus a transient one-image buffer, not a second full list. Because
+    `images` (the base) is untouched, the caller can call this again for a
+    second, third, etc. sibling group (round 44 adds `random_perspective`
+    alongside round 40's `random_shift`) against the exact same base -- see
+    `_run_select_phase` for the accumulation pattern -- rather than being
+    limited to one terminal stage the way a doubling implementation would be.
     """
     rng = np.random.default_rng(seed)
-    n_before = len(images)
     new_features = [extract_features(Image.fromarray(single_image_augment_fn(img, rng))) for img in images]
-    X_new = np.stack(new_features)
-    del new_features
-    X = np.concatenate([X_existing, X_new])
-    labels_out = list(labels) + list(labels)
-    groups_out = np.concatenate([groups, groups]) if groups is not None else None
-    y = np.array(labels_out)
-    print(f"{stage_name}: {n_before} -> {n_before * 2} images (terminal stage, features extracted one at a time)")
-    return labels_out, groups_out, X, y
+    print(f"{stage_name}: {len(images)} -> +{len(images)} sibling images (features extracted one at a time)")
+    return np.stack(new_features)
 
 
 def _select_thresholds(y_true: np.ndarray, dme_proba: np.ndarray, min_recall: float = 0.85) -> dict:
@@ -526,6 +516,7 @@ def _multi_seed_worker_evaluate(
     flip_augment: bool,
     brightness_augment: bool,
     shift_augment: bool,
+    perspective_augment: bool,
 ) -> dict:
     """Evaluates ONE split seed: load, split, augment, extract, fit, grade
     against the held-out fold. Called from a fresh subprocess per seed by
@@ -546,19 +537,23 @@ def _multi_seed_worker_evaluate(
 
     X_train_seed = np.stack([extract_features(Image.fromarray(img)) for img in train_images])
     y_train_seed = np.array(train_labels)
+    base_labels_seed = np.array(train_labels)
+    # Sibling stages (round 40's shift, round 44's perspective): each derives its
+    # own group straight from the same post-rotation+flip+brightness base images,
+    # never doubling train_images itself -- see
+    # _extract_sibling_augmentation_features's docstring for the OOM this avoids.
     if shift_augment:
-        # Terminal stage (round 40): extracts shift-augmented features one image at a
-        # time rather than doubling train_images itself -- see
-        # _apply_terminal_augmentation_stage's docstring for the OOM this avoids.
-        train_labels, _, X_train_seed, y_train_seed = _apply_terminal_augmentation_stage(
-            train_images,
-            train_labels,
-            None,
-            X_train_seed,
-            random_shift,
-            "Shift-augmented training split (round 40)",
-            seed=55,
+        X_shift_seed = _extract_sibling_augmentation_features(
+            train_images, random_shift, seed=55, stage_name="Shift-augmented training split (round 40)"
         )
+        X_train_seed = np.concatenate([X_train_seed, X_shift_seed])
+        y_train_seed = np.concatenate([y_train_seed, base_labels_seed])
+    if perspective_augment:
+        X_persp_seed = _extract_sibling_augmentation_features(
+            train_images, random_perspective, seed=99, stage_name="Perspective-augmented training split (round 44)"
+        )
+        X_train_seed = np.concatenate([X_train_seed, X_persp_seed])
+        y_train_seed = np.concatenate([y_train_seed, base_labels_seed])
     del train_images
 
     X_test_seed = np.stack([extract_features(Image.fromarray(raw_images[i])) for i in test_idx])
@@ -588,6 +583,7 @@ def _multi_seed_evaluation(
     flip_augment: bool = False,
     brightness_augment: bool = False,
     shift_augment: bool = False,
+    perspective_augment: bool = False,
 ) -> dict:
     """Refits the winning model type across several train/test split seeds and
     reports mean/std, instead of trusting the single split's numbers at face
@@ -603,10 +599,10 @@ def _multi_seed_evaluation(
     characterization describing the pre-round-23 recipe even after the
     augmented recipe shipped, which would have made this field describe a
     model no longer in production. `flip_augment` (round 29),
-    `brightness_augment` (round 30), and `shift_augment` (round 40) do the
-    same for their respective stages, applied in the same order as the real
-    training pipeline (rotation, then flip, then brightness/contrast, then
-    shift).
+    `brightness_augment` (round 30), and `shift_augment`/`perspective_augment`
+    (rounds 40/44) do the same for their respective stages, applied in the
+    same order as the real training pipeline (rotation, then flip, then
+    brightness/contrast, then the shift and perspective sibling groups).
 
     Round 30 found this function's own 5-seed loop -- stacked on top of an
     already-large select_best_model phase within the same process -- was the
@@ -650,6 +646,8 @@ def _multi_seed_evaluation(
             cmd.append("--no-brightness-augment")
         if not shift_augment:
             cmd.append("--no-shift-augment")
+        if not perspective_augment:
+            cmd.append("--no-perspective-augment")
         proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
         # The worker prints exactly one JSON line (as its last stdout line);
         # sklearn/joblib warnings some environments emit go to stderr, not stdout.
@@ -667,6 +665,7 @@ def _multi_seed_evaluation(
         "flip_augment": flip_augment,
         "brightness_augment": brightness_augment,
         "shift_augment": shift_augment,
+        "perspective_augment": perspective_augment,
         "test_accuracy": _summary(accuracies),
         "dme_precision": _summary(dme_precisions),
         "dme_recall": _summary(dme_recalls),
@@ -814,6 +813,8 @@ def _run_synthetic_training(args: argparse.Namespace) -> None:
         "n_train_samples_after_brightness_augment": n_train_after_oversampling,
         "shift_augment_enabled": False,
         "n_train_samples_after_shift_augment": n_train_after_oversampling,
+        "perspective_augment_enabled": False,
+        "n_train_samples_after_perspective_augment": n_train_after_oversampling,
         "classes": CLASSES,
         "selected_model": best_name,
         "cv_balanced_accuracy_by_model": cv_scores,
@@ -858,17 +859,27 @@ def _run_select_phase(args: argparse.Namespace) -> dict:
     the machine's 15GB ceiling) mid-augmentation, before select_best_model
     even started. The fix wasn't isolating select_best_model's candidate
     loop (that would only have helped if the augmented *feature matrix* were
-    the problem; it's tiny). The real cost was the raw *pixel* list: shift is
-    always the last stage in the recipe, and nothing downstream needs its
-    augmented copies' raw pixels, only their features -- so it's applied via
-    `_apply_terminal_augmentation_stage`, which extracts each copy's features
-    one image at a time and never doubles the raw-image list at all (the
-    same fix round 38 used for its own throwaway experiment script, now
-    applied to the real pipeline). A future 5th stage that also needs to be
-    terminal would need the same treatment; a future NON-terminal stage
-    added after today's shift would need shift converted back to the
-    doubling `_apply_augmentation_stage` pattern, since only the actual last
-    stage in the chain can skip materializing its raw output.
+    the problem; it's tiny). The real cost was the raw *pixel* list: neither
+    shift nor anything added after it needs its augmented copies' raw
+    pixels, only their features -- so each is applied via
+    `_extract_sibling_augmentation_features`, which extracts one new
+    "sibling" group's features one image at a time, straight from a fixed
+    post-rotation+flip+brightness base image list, and never doubles the
+    raw-image list at all (the same fix round 38 used for its own throwaway
+    experiment script, now applied to the real pipeline).
+
+    Round 44 generalized this from a single terminal stage to an arbitrary
+    number of parallel sibling groups: shift (round 40) and perspective
+    (round 44) are each derived independently from the same fixed base
+    images/labels/groups captured before either is added, and concatenated
+    onto X_train/y_train/labels_train/groups_train by the caller -- see
+    `_extract_sibling_augmentation_features`'s docstring. A future 5th
+    stage that should sit alongside shift and perspective (rather than
+    chain onto either of their outputs) just needs the same
+    `base_images_train`-derived call added as another sibling block; only a
+    stage that must genuinely chain onto a *previous* augmented copy (not
+    the shared base) would need the older doubling `_apply_augmentation_stage`
+    pattern instead.
 
     Returns a JSON-serializable dict of everything the orchestrator needs for
     the final model card. Does NOT save a checkpoint unless minority-oversample
@@ -934,23 +945,45 @@ def _run_select_phase(args: argparse.Namespace) -> dict:
         )
     n_train_after_brightness_augment = len(images_train)
 
+    # Sibling groups (round 40's shift, round 44's perspective): each derives its
+    # own group straight from the same post-rotation+flip+brightness base images,
+    # never doubling images_train itself -- see
+    # _extract_sibling_augmentation_features's docstring for the OOM this avoids.
+    base_images_train = images_train
+    base_labels_train = list(labels_train)
+    base_groups_train = groups_train
+
     shift_augmented = not args.no_shift_augment
     if shift_augmented:
-        labels_train, groups_train, X_train, y_train = _apply_terminal_augmentation_stage(
-            images_train,
-            labels_train,
-            groups_train,
-            X_train,
-            random_shift,
-            "Shift-augmented training split (round 40)",
-            seed=55,
+        X_shift = _extract_sibling_augmentation_features(
+            base_images_train, random_shift, seed=55, stage_name="Shift-augmented training split (round 40)"
         )
+        X_train = np.concatenate([X_train, X_shift])
+        y_train = np.concatenate([y_train, np.array(base_labels_train)])
+        labels_train = labels_train + base_labels_train
+        groups_train = np.concatenate([groups_train, base_groups_train])
     n_train_after_shift_augment = len(labels_train)
-    # images_train no longer matches y_train/X_train once the terminal stage above
-    # doubled labels/features without doubling the raw-pixel list (that's the whole
-    # memory-saving point) -- freed here rather than left sitting at ~13.5GB across
-    # the ~21 sequential fits select_best_model is about to run.
-    del images_train
+
+    perspective_augmented = not args.no_perspective_augment
+    if perspective_augmented:
+        X_persp = _extract_sibling_augmentation_features(
+            base_images_train,
+            random_perspective,
+            seed=99,
+            stage_name="Perspective-augmented training split (round 44)",
+        )
+        X_train = np.concatenate([X_train, X_persp])
+        y_train = np.concatenate([y_train, np.array(base_labels_train)])
+        labels_train = labels_train + base_labels_train
+        groups_train = np.concatenate([groups_train, base_groups_train])
+    n_train_after_perspective_augment = len(labels_train)
+
+    # images_train (== base_images_train) no longer matches y_train/X_train once a
+    # sibling stage above extended labels/features without extending the raw-pixel
+    # list (that's the whole memory-saving point) -- freed here rather than left
+    # sitting at ~13.5GB across the ~21 sequential fits select_best_model is about
+    # to run.
+    del images_train, base_images_train
 
     print("Selecting best model via cross-validation on the training split:")
     best_name, best_estimator, cv_scores = select_best_model(X_train, y_train, groups=groups_train)
@@ -1030,6 +1063,8 @@ def _run_select_phase(args: argparse.Namespace) -> dict:
         "n_train_samples_after_brightness_augment": n_train_after_brightness_augment,
         "shift_augment_enabled": shift_augmented,
         "n_train_samples_after_shift_augment": n_train_after_shift_augment,
+        "perspective_augment_enabled": perspective_augmented,
+        "n_train_samples_after_perspective_augment": n_train_after_perspective_augment,
         "selected_model": best_name,
         "cv_balanced_accuracy_by_model": cv_scores,
         "test_accuracy": test_accuracy,
@@ -1079,13 +1114,33 @@ def _run_final_refit_phase(args: argparse.Namespace) -> None:
             _brightness_contrast_augment,
             "Brightness/contrast-augmented full dataset for final refit",
         )
+    # Sibling groups (round 40's shift, round 44's perspective): each derives
+    # its own group straight from the same post-rotation+flip+brightness base
+    # images, never doubling full_images itself -- see
+    # _extract_sibling_augmentation_features's docstring for the OOM this avoids.
+    base_full_images = full_images
+    base_full_labels = list(full_labels)
+
     if not args.no_shift_augment:
-        # Terminal stage (round 40): see _apply_terminal_augmentation_stage's docstring
-        # for the OOM this avoids by not doubling full_images itself.
-        full_labels, _, X_full, y_full = _apply_terminal_augmentation_stage(
-            full_images, full_labels, None, X_full, random_shift, "Shift-augmented full dataset for final refit", seed=55
+        X_shift_full = _extract_sibling_augmentation_features(
+            base_full_images, random_shift, seed=55, stage_name="Shift-augmented full dataset for final refit"
         )
-    del full_images
+        X_full = np.concatenate([X_full, X_shift_full])
+        y_full = np.concatenate([y_full, np.array(base_full_labels)])
+        full_labels = full_labels + base_full_labels
+
+    if not args.no_perspective_augment:
+        X_persp_full = _extract_sibling_augmentation_features(
+            base_full_images,
+            random_perspective,
+            seed=99,
+            stage_name="Perspective-augmented full dataset for final refit",
+        )
+        X_full = np.concatenate([X_full, X_persp_full])
+        y_full = np.concatenate([y_full, np.array(base_full_labels)])
+        full_labels = full_labels + base_full_labels
+
+    del full_images, base_full_images
 
     estimator = _candidate_estimators()[args.estimator_name]
     model = OCTClassifier(estimator)
@@ -1114,6 +1169,8 @@ def _phase_subprocess_cmd(args: argparse.Namespace) -> list[str]:
         cmd.append("--no-brightness-augment")
     if args.no_shift_augment:
         cmd.append("--no-shift-augment")
+    if args.no_perspective_augment:
+        cmd.append("--no-perspective-augment")
     if args.minority_oversample != 1:
         cmd += ["--minority-oversample", str(args.minority_oversample)]
     return cmd
@@ -1159,6 +1216,7 @@ def _run_real_training(args: argparse.Namespace) -> None:
             flip_augment=select_result["flip_augment_enabled"],
             brightness_augment=select_result["brightness_augment_enabled"],
             shift_augment=select_result["shift_augment_enabled"],
+            perspective_augment=select_result["perspective_augment_enabled"],
         )
         print(
             f"  test accuracy: {multi_seed_metrics['test_accuracy']['mean']:.3f} "
@@ -1191,6 +1249,8 @@ def _run_real_training(args: argparse.Namespace) -> None:
         "n_train_samples_after_brightness_augment": select_result["n_train_samples_after_brightness_augment"],
         "shift_augment_enabled": select_result["shift_augment_enabled"],
         "n_train_samples_after_shift_augment": select_result["n_train_samples_after_shift_augment"],
+        "perspective_augment_enabled": select_result["perspective_augment_enabled"],
+        "n_train_samples_after_perspective_augment": select_result["n_train_samples_after_perspective_augment"],
         "classes": CLASSES,
         "trained_on_real_patient_data": True,
         **{
@@ -1267,6 +1327,19 @@ def main() -> None:
         "than the metric's own cross-seed std) -- never down on accuracy or precision, so it ships "
         "enabled by default; this flag reverts to the round 30 baseline behavior.",
     )
+    parser.add_argument(
+        "--no-perspective-augment",
+        action="store_true",
+        help="Disable perspective/keystone-warp-augmented training (round 44, real data only): by default, "
+        "each (rotation+flip+brightness-augmented) real training image is supplemented with a copy warped "
+        "by displacing its 4 corners inward by up to 6%% of width/height (a phone photo of a screen/printout "
+        "is rarely taken perfectly perpendicular), padded with black rather than stretched -- see README "
+        "round 44. Measured across 5 split seeds against the current shipped recipe (base+shift): accuracy "
+        "improved in 4/5 seeds (down in 1 by less than the metric's own cross-seed std), DME precision up "
+        "substantially in 3/5 (down negligibly in 2), DME recall up substantially in 3/5 (down modestly in "
+        "2, losses smaller than the gains) -- the strongest and cleanest result of any augmentation round so "
+        "far, so it ships enabled by default; this flag reverts to the round 40 baseline behavior.",
+    )
     parser.add_argument("--out", type=str, default=str(DEFAULT_CHECKPOINT_PATH))
     parser.add_argument(
         "--multi-seed-worker-seed",
@@ -1315,6 +1388,7 @@ def main() -> None:
             flip_augment=not args.no_flip_augment,
             brightness_augment=not args.no_brightness_augment,
             shift_augment=not args.no_shift_augment,
+            perspective_augment=not args.no_perspective_augment,
         )
         print(json.dumps(result))
         return
