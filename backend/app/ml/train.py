@@ -68,11 +68,21 @@ from app.ml.model import CLASSES, DEFAULT_CHECKPOINT_PATH, OCTClassifier
 from app.ml.synthetic_dataset import generate_dataset
 
 
-def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
+def _candidate_estimators(random_state: int = 42, probability: bool = True) -> dict[str, object]:
     # Each estimator is wrapped in a StandardScaler so the handful of domain
     # features (band thickness, dark-zone fraction, ...) get comparable weight
     # to the 2304 raw-pixel features instead of being drowned out -- and the
     # saved checkpoint carries the scaler, so inference stays consistent.
+    #
+    # `probability` defaults to True (needed once a candidate is actually the
+    # winner -- see select_best_model) but select_best_model's own CV-scoring
+    # pass builds these with probability=False: SVC's Platt-scaling probability
+    # calibration runs an internal 5-fold CV inside every .fit() call, which is
+    # pure waste during selection, since cross_val_score(..., scoring=
+    # "balanced_accuracy") only ever calls .predict() -- and predict() is based
+    # on the decision function, not the probability calibration, so it's
+    # identical either way (sklearn's own docs note predict_proba can disagree
+    # with predict for exactly this reason: they're unrelated code paths).
     return {
         "mlp_128_64": make_pipeline(
             StandardScaler(),
@@ -92,7 +102,7 @@ def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
         ),
         "svm_rbf": make_pipeline(
             StandardScaler(),
-            SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
+            SVC(kernel="rbf", probability=probability, class_weight="balanced", random_state=random_state),
         ),
         # Round 11: the 1578-dim HOG+domain vector against ~700-900 patient-grouped
         # training images is a high-dim/low-N regime prone to overfitting, especially
@@ -101,7 +111,7 @@ def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
         "svm_rbf_pca30": make_pipeline(
             StandardScaler(),
             PCA(n_components=30, random_state=random_state),
-            SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
+            SVC(kernel="rbf", probability=probability, class_weight="balanced", random_state=random_state),
         ),
         # Round 27: round 23's rotation augmentation grew the actual training set
         # ~5x past round 11's original ~700-900 images, so 30 components (tuned on
@@ -113,7 +123,7 @@ def _candidate_estimators(random_state: int = 42) -> dict[str, object]:
         "svm_rbf_pca75": make_pipeline(
             StandardScaler(),
             PCA(n_components=75, random_state=random_state),
-            SVC(kernel="rbf", probability=True, class_weight="balanced", random_state=random_state),
+            SVC(kernel="rbf", probability=probability, class_weight="balanced", random_state=random_state),
         ),
     }
 
@@ -681,7 +691,13 @@ def select_best_model(
         if groups is not None
         else StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
     )
-    candidates = _candidate_estimators()
+    # probability=False here (round 44 perf fix): cross_val_score's balanced_accuracy
+    # scoring only ever calls .predict(), never .predict_proba(), so SVC's Platt-
+    # scaling calibration (an internal 5-fold CV inside every .fit()) is pure
+    # overhead during selection -- see _candidate_estimators' docstring. The winner
+    # is re-fetched with probability=True below, since the caller needs real
+    # probability estimates once this candidate is actually the one getting fit.
+    candidates = _candidate_estimators(probability=False)
     scores: dict[str, float] = {}
     for name, estimator in candidates.items():
         try:
@@ -699,10 +715,11 @@ def select_best_model(
     if not scores:
         raise RuntimeError("No candidate estimator could be cross-validated on this dataset")
     best_name = max(scores, key=scores.get)
-    # clone() gives a fresh unfitted copy of the SAME estimator that was already
-    # built above -- cheaper and clearer than reconstructing all 5 candidate
-    # pipelines again just to keep 1.
-    return best_name, clone(candidates[best_name]), scores
+    # clone() gives a fresh unfitted copy -- but of the real (probability=True)
+    # estimator, not the probability=False one used for scoring above, since the
+    # caller fits this one for real and needs predict_proba downstream (DME
+    # threshold selection, calibration metrics).
+    return best_name, clone(_candidate_estimators()[best_name]), scores
 
 
 def _run_synthetic_training(args: argparse.Namespace) -> None:
