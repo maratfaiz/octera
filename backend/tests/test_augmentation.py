@@ -8,6 +8,7 @@ from app.ml.augmentation import (
     random_flip,
     random_perspective,
     random_shift,
+    random_vignette,
     speckle_noise,
 )
 
@@ -34,6 +35,7 @@ def test_individual_transforms_stay_in_valid_range():
         jpeg_artifacts,
         gaussian_blur,
         random_perspective,
+        random_vignette,
     ):
         out = transform(img, rng)
         assert out.shape == img.shape
@@ -109,6 +111,44 @@ def test_random_perspective_pads_vacated_region_with_black():
     assert (out[: height - offset, : width - offset] == 255).all()
     assert (out[height - offset :, :] == 0).all()
     assert (out[:, width - offset :] == 0).all()
+
+
+def test_random_vignette_actually_changes_pixels():
+    """A meaningful vignette strength should perturb at least some pixels --
+    if this ever passed with an unchanged image, the falloff computation
+    would have silently become a no-op (e.g. strength clamped to 0).
+    """
+    rng = np.random.default_rng(5)
+    img = np.full((96, 96), 200, dtype=np.uint8)
+
+    out = random_vignette(img, rng, strength_range=(0.4, 0.4))
+
+    assert not np.array_equal(out, img)
+
+
+def test_random_vignette_darkens_corners_more_than_center():
+    """The whole point of a vignette is a smooth radial falloff -- corners
+    (farthest from center) must darken strictly more than the center pixel,
+    not uniformly or in reverse. A fixed strength makes the exact falloff at
+    the center (1.0, unchanged) and at the farthest corner (1 - strength)
+    precisely predictable.
+    """
+    height, width = 100, 100
+    img = np.full((height, width), 200, dtype=np.uint8)
+
+    class _FixedRng:
+        def uniform(self, low, high):
+            return low
+
+    strength = 0.4
+    out = random_vignette(img, _FixedRng(), strength_range=(strength, strength))
+
+    center = out[height // 2, width // 2]
+    corner = out[0, 0]
+
+    assert corner < center
+    assert center == 200  # falloff is 1.0 exactly at the center
+    assert corner == round(200 * (1 - strength))
 
 
 def test_random_shift_pads_instead_of_wrapping():

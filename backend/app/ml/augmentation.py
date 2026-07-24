@@ -131,6 +131,35 @@ def random_perspective(img: np.ndarray, rng: np.random.Generator, max_warp_frac:
     return np.array(out)
 
 
+def random_vignette(img: np.ndarray, rng: np.random.Generator, strength_range: tuple[float, float] = (0.15, 0.45)) -> np.ndarray:
+    """Applies a radial vignette (darkened corners/edges) -- not tried before
+    (round 47 exploratory check, see README) despite matching the same "phone
+    photo of a screen/printout" scenario that already motivated rotation
+    (round 19/23), shift (round 40), and perspective (round 44): a real
+    handheld phone camera's own lens/sensor falloff, plus uneven ambient
+    lighting on the photographed surface, commonly darkens the corners and
+    edges relative to the center. Unlike the pixel-level noise/blur
+    augmentations this project already tried and found unhelpful (speckle
+    noise round 38, JPEG artifacts round 39, Gaussian blur rounds 42/45),
+    this is a geometric/lighting artifact -- the same category as the three
+    augmentations that have actually shipped.
+
+    Darkens each pixel by a factor that falls off quadratically with its
+    normalized distance from the image center (1.0 at the center, down to
+    `1 - strength` at the farthest corner), rather than a hard circular mask,
+    for a smooth falloff matching real vignetting rather than a visible edge.
+    """
+    height, width = img.shape
+    strength = float(rng.uniform(strength_range[0], strength_range[1]))
+    y, x = np.ogrid[:height, :width]
+    center_y, center_x = height / 2, width / 2
+    max_dist = np.sqrt(center_x**2 + center_y**2)
+    normalized_dist = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2) / max_dist
+    falloff = 1.0 - strength * normalized_dist**2
+    out = img.astype(np.float64) * falloff
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 def augment(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     img = random_flip(img, rng)
     img = random_shift(img, rng)
