@@ -160,6 +160,42 @@ def random_vignette(img: np.ndarray, rng: np.random.Generator, strength_range: t
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
+def random_zoom(img: np.ndarray, rng: np.random.Generator, scale_range: tuple[float, float] = (0.85, 1.15)) -> np.ndarray:
+    """Applies a random zoom in/out, re-centered to the original canvas size
+    -- not tried before (round 48 exploratory check, see README) despite
+    matching the same "phone photo of a screen/printout" scenario that
+    already motivated rotation (round 19/23), shift (round 40), and
+    perspective (round 44): a real handheld photo is rarely taken from
+    exactly the same distance every time, so the photographed content
+    plausibly appears larger or smaller within the frame. This is a distinct
+    geometric transform from the three that shipped -- rotation turns,
+    shift translates, perspective skews, but none of them change scale.
+
+    Zooming in (scale > 1) crops the resized image's center back down to the
+    original size, discarding content that fell outside the frame; zooming
+    out (scale < 1) pastes the smaller resized image onto a black canvas of
+    the original size, centered -- the same "lost/vacated content is black,
+    not wrapped or stretched" convention as random_shift and
+    random_perspective.
+    """
+    height, width = img.shape
+    scale = float(rng.uniform(scale_range[0], scale_range[1]))
+    new_height = max(1, round(height * scale))
+    new_width = max(1, round(width * scale))
+    resized = np.array(Image.fromarray(img).resize((new_width, new_height), resample=Image.BILINEAR))
+
+    if scale >= 1.0:
+        top = (new_height - height) // 2
+        left = (new_width - width) // 2
+        return resized[top : top + height, left : left + width]
+
+    out = np.zeros((height, width), dtype=np.uint8)
+    top = (height - new_height) // 2
+    left = (width - new_width) // 2
+    out[top : top + new_height, left : left + new_width] = resized
+    return out
+
+
 def augment(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     img = random_flip(img, rng)
     img = random_shift(img, rng)

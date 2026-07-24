@@ -9,6 +9,7 @@ from app.ml.augmentation import (
     random_perspective,
     random_shift,
     random_vignette,
+    random_zoom,
     speckle_noise,
 )
 
@@ -36,6 +37,7 @@ def test_individual_transforms_stay_in_valid_range():
         gaussian_blur,
         random_perspective,
         random_vignette,
+        random_zoom,
     ):
         out = transform(img, rng)
         assert out.shape == img.shape
@@ -149,6 +151,65 @@ def test_random_vignette_darkens_corners_more_than_center():
     assert corner < center
     assert center == 200  # falloff is 1.0 exactly at the center
     assert corner == round(200 * (1 - strength))
+
+
+def test_random_zoom_actually_changes_pixels():
+    """A meaningful zoom (in or out) should perturb a non-uniform image --
+    if this ever passed with an unchanged image, the resize/crop/paste logic
+    would have silently become a no-op (e.g. scale clamped to 1.0).
+    """
+    rng = np.random.default_rng(6)
+    img = np.linspace(0, 255, 96 * 96, dtype=np.uint8).reshape(96, 96)
+
+    out = random_zoom(img, rng, scale_range=(1.2, 1.2))
+
+    assert not np.array_equal(out, img)
+
+
+def test_random_zoom_out_pads_vacated_border_with_black():
+    """Zooming out (scale < 1) must pad the vacated border with black
+    (matching random_shift/random_perspective's "lost content" convention),
+    not wrap, stretch, or leave it uninitialized.
+    """
+    height, width = 100, 100
+    img = np.full((height, width), 255, dtype=np.uint8)
+
+    class _FixedRng:
+        def uniform(self, low, high):
+            return low
+
+    scale = 0.6
+    out = random_zoom(img, _FixedRng(), scale_range=(scale, scale))
+    new_height = round(height * scale)
+    new_width = round(width * scale)
+    top = (height - new_height) // 2
+    left = (width - new_width) // 2
+
+    assert out.dtype == np.uint8
+    assert out.shape == img.shape
+    assert (out[top : top + new_height, left : left + new_width] == 255).all()
+    assert (out[:top, :] == 0).all()
+    assert (out[top + new_height :, :] == 0).all()
+    assert (out[:, :left] == 0).all()
+    assert (out[:, left + new_width :] == 0).all()
+
+
+def test_random_zoom_in_crops_to_original_size():
+    """Zooming in (scale > 1) must crop the resized image's center back down
+    to the original canvas size -- output shape must never change regardless
+    of zoom direction.
+    """
+    height, width = 100, 100
+    img = np.full((height, width), 255, dtype=np.uint8)
+
+    class _FixedRng:
+        def uniform(self, low, high):
+            return high
+
+    out = random_zoom(img, _FixedRng(), scale_range=(1.3, 1.3))
+
+    assert out.dtype == np.uint8
+    assert out.shape == img.shape
 
 
 def test_random_shift_pads_instead_of_wrapping():
