@@ -6,6 +6,7 @@ from app.ml.augmentation import (
     jpeg_artifacts,
     random_brightness_contrast,
     random_flip,
+    random_glare,
     random_perspective,
     random_shift,
     random_vignette,
@@ -38,6 +39,7 @@ def test_individual_transforms_stay_in_valid_range():
         random_perspective,
         random_vignette,
         random_zoom,
+        random_glare,
     ):
         out = transform(img, rng)
         assert out.shape == img.shape
@@ -151,6 +153,51 @@ def test_random_vignette_darkens_corners_more_than_center():
     assert corner < center
     assert center == 200  # falloff is 1.0 exactly at the center
     assert corner == round(200 * (1 - strength))
+
+
+def test_random_glare_actually_changes_pixels():
+    """A meaningful glare strength should perturb at least some pixels -- if
+    this ever passed with an unchanged image, the highlight computation would
+    have silently become a no-op (e.g. strength clamped to 0).
+    """
+    rng = np.random.default_rng(7)
+    img = np.full((96, 96), 50, dtype=np.uint8)
+
+    out = random_glare(img, rng, strength_range=(0.5, 0.5))
+
+    assert not np.array_equal(out, img)
+
+
+def test_random_glare_brightens_near_center_more_than_far_away():
+    """The whole point of a glare highlight is a localized, additive bright
+    spot with a smooth falloff -- a pixel at the highlight's own center must
+    brighten strictly more than a pixel far away from it, and glare must only
+    ever add brightness, never subtract it. A fixed rng pins the highlight's
+    center at pixel (0, 0) (the "always return low" pattern puts both
+    position draws, which sample from (0, width) and (0, height), at their
+    low end), making the exact brightening at that exact pixel (strength *
+    255, since the Gaussian falloff is 1.0 at distance 0) and the
+    near-total absence of brightening far away (many standard deviations out
+    along the Gaussian falloff) both precisely predictable.
+    """
+    height, width = 100, 100
+    baseline = 50
+    img = np.full((height, width), baseline, dtype=np.uint8)
+
+    class _FixedRng:
+        def uniform(self, low, high):
+            return low
+
+    strength = 0.4  # strength * 255 == 102, an exact integer for a clean assertion
+    out = random_glare(img, _FixedRng(), strength_range=(strength, strength), radius_frac_range=(0.2, 0.2))
+
+    center = out[0, 0]
+    far_corner = out[height - 1, width - 1]
+
+    assert center > baseline
+    assert center == baseline + round(strength * 255)
+    assert far_corner <= baseline + 1  # negligible Gaussian tail this many std devs out
+    assert far_corner >= baseline  # glare only adds brightness, never subtracts
 
 
 def test_random_zoom_actually_changes_pixels():

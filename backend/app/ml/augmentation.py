@@ -196,6 +196,44 @@ def random_zoom(img: np.ndarray, rng: np.random.Generator, scale_range: tuple[fl
     return out
 
 
+def random_glare(
+    img: np.ndarray,
+    rng: np.random.Generator,
+    strength_range: tuple[float, float] = (0.3, 0.7),
+    radius_frac_range: tuple[float, float] = (0.15, 0.35),
+) -> np.ndarray:
+    """Adds a soft-edged specular highlight (glare) blob at a random position
+    -- a new category, not tried before, despite matching the same "phone
+    photo of a screen/printout" scenario that already motivated rotation
+    (round 19/23), shift (round 40), perspective (round 44), and vignette
+    (round 47): a glossy phone or monitor screen commonly reflects a window,
+    room light, or camera flash back at the lens, producing a bright,
+    roughly circular highlight somewhere in the frame. Unlike vignette (round
+    47, rejected) -- which uniformly *darkens* every pixel by a fixed
+    center-relative falloff -- glare is strictly additive (light only adds,
+    never subtracts) and localized to a random position rather than always
+    centered on the image, so it is a meaningfully different hypothesis
+    despite the shared "lighting artifact" category.
+
+    The highlight's center is drawn uniformly across the full canvas
+    (including partly off-frame, since a real reflection isn't guaranteed to
+    be centered in shot), and its brightness falls off as a Gaussian of the
+    distance from that center, so it reads as a smooth highlight rather than
+    a hard-edged disc.
+    """
+    height, width = img.shape
+    strength = float(rng.uniform(strength_range[0], strength_range[1]))
+    radius = float(rng.uniform(radius_frac_range[0], radius_frac_range[1])) * min(height, width)
+    center_x = float(rng.uniform(0, width))
+    center_y = float(rng.uniform(0, height))
+    y, x = np.ogrid[:height, :width]
+    dist_sq = (x - center_x) ** 2 + (y - center_y) ** 2
+    sigma = radius / 2.0
+    glare = strength * 255.0 * np.exp(-dist_sq / (2 * sigma**2))
+    out = img.astype(np.float64) + glare
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
 def augment(img: np.ndarray, rng: np.random.Generator) -> np.ndarray:
     img = random_flip(img, rng)
     img = random_shift(img, rng)
