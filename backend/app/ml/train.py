@@ -1144,7 +1144,6 @@ def _run_final_refit_phase(args: argparse.Namespace) -> None:
         )
         X_full = np.concatenate([X_full, X_shift_full])
         y_full = np.concatenate([y_full, np.array(base_full_labels)])
-        full_labels = full_labels + base_full_labels
 
     if not args.no_perspective_augment:
         X_persp_full = _extract_sibling_augmentation_features(
@@ -1155,7 +1154,6 @@ def _run_final_refit_phase(args: argparse.Namespace) -> None:
         )
         X_full = np.concatenate([X_full, X_persp_full])
         y_full = np.concatenate([y_full, np.array(base_full_labels)])
-        full_labels = full_labels + base_full_labels
 
     del full_images, base_full_images
 
