@@ -1,9 +1,13 @@
 import numpy as np
 from PIL import Image
 
+from app.ml.signal_utils import dark_mask_in_band
 from app.services.segmentation import (
+    DARKNESS_OFFSET,
     LAYERS,
     PATHOLOGY_LABELS_RU,
+    _RPE_BOTTOM_IDX,
+    _detect_drusen_zones,
     _detect_fovea_column,
     _detect_pathology_findings,
     _detect_pathology_zones,
@@ -12,6 +16,10 @@ from app.services.segmentation import (
     _track_boundaries,
     segment_layers,
 )
+
+
+def _dark_mask_fn(flat, valid):
+    return dark_mask_in_band(flat, valid, DARKNESS_OFFSET)
 
 
 def _synthetic_retina(height: int, width: int, dip_col: int | None) -> np.ndarray:
@@ -123,7 +131,7 @@ def test_detect_pathology_zones_finds_a_localized_dark_blob():
     band = np.full((height, width), 0.6, dtype=np.float32)
     band[80:120, 80:120] = 0.1  # compact, notably darker patch well over the min-area threshold
 
-    mask, count = _detect_pathology_zones(band, [0, height])
+    mask, count = _detect_pathology_zones(band, [0, height], _dark_mask_fn)
 
     assert count >= 1
     assert mask[80:120, 80:120].any()
@@ -134,7 +142,7 @@ def test_detect_pathology_zones_ignores_a_uniform_band():
     rng = np.random.default_rng(0)
     band = np.full((height, width), 0.6, dtype=np.float32) + rng.normal(0, 0.01, (height, width)).astype(np.float32)
 
-    _, count = _detect_pathology_zones(band, [0, height])
+    _, count = _detect_pathology_zones(band, [0, height], _dark_mask_fn)
 
     assert count == 0
 
@@ -229,6 +237,72 @@ def test_pathology_categories_cover_the_is_os_band_no_gap():
     assert masks["subretinal_fluid"][:, 120:130].any()
 
 
+def test_detect_pathology_findings_flags_bright_subretinal_material_not_dark_fluid():
+    """subretinal_hyperreflective_material is bright_mask_in_band's mirror
+    image of subretinal_fluid's dark_mask_in_band, scoped to the same
+    boundary range -- a bright patch there must register as SHRM, not as
+    fluid (which only fires on darker-than-baseline pixels).
+    """
+    height, width = 200, 300
+    band_top, band_height = 60, 60
+    gray = np.full((height, width), 0.03, dtype=np.float32)
+    gray[band_top : band_top + band_height, :] = 0.6
+    boundaries = _track_boundaries(gray)
+
+    is_os_row = int((boundaries[5].mean() + boundaries[6].mean()) / 2)
+    gray_bright = gray.copy()
+    gray_bright[is_os_row - 3 : is_os_row + 3, 120:130] = 0.95  # brighter than the 0.6 baseline
+
+    _, masks = _detect_pathology_findings(gray_bright, boundaries)
+
+    assert masks["subretinal_hyperreflective_material"][:, 120:130].any()
+    assert not masks["subretinal_fluid"][:, 120:130].any()
+
+
+def test_detect_drusen_zones_finds_a_localized_rpe_bulge():
+    """Drusen bulge the RPE-choroid boundary outward -- unlike the intensity-
+    based categories above, this must fire from the boundary curve's own
+    shape, not from pixel brightness.
+    """
+    height, width = 200, 300
+    boundaries = np.zeros((len(LAYERS) + 1, width), dtype=float)
+    boundaries[0] = 60.0
+    boundaries[-1] = 140.0
+    for i in range(1, len(LAYERS)):
+        boundaries[i] = 60.0 + i * 10.0
+    boundaries[_RPE_BOTTOM_IDX, 100:130] += 15.0  # a real, localized outward bulge
+
+    mask, count = _detect_drusen_zones(height, boundaries)
+
+    assert count >= 1
+    assert mask[:, 100:130].any()
+    assert not mask[:, :50].any()
+    assert not mask[:, 250:].any()
+
+
+def test_detect_drusen_zones_ignores_flat_boundary_edge_smoothing_artifact():
+    """Regression test: an earlier version compared the RPE-choroid boundary
+    directly to `smooth`'s output with no edge margin. `smooth`'s boxcar
+    convolution implicitly zero-pads past the array edges, which drags the
+    smoothed baseline down near columns 0 and width-1 regardless of image
+    content -- a perfectly flat boundary (no real bulge anywhere) still fired
+    false "drusen" near both edges, over a span of roughly half the
+    smoothing window. Every real image's RPE boundary reaches both edges, so
+    unfixed this would have false-flagged drusen on nearly every scan.
+    """
+    height, width = 200, 300
+    boundaries = np.zeros((len(LAYERS) + 1, width), dtype=float)
+    boundaries[0] = 60.0
+    boundaries[-1] = 140.0
+    for i in range(1, len(LAYERS)):
+        boundaries[i] = 60.0 + i * 10.0  # perfectly flat -- no real bulge anywhere
+
+    mask, count = _detect_drusen_zones(height, boundaries)
+
+    assert count == 0
+    assert not mask.any()
+
+
 def test_detect_pathology_zones_min_area_reference_uses_provided_pixel_count():
     """Regression test: round 37 started calling _detect_pathology_zones once
     per category over a narrower sub-band instead of once over the whole
@@ -242,8 +316,10 @@ def test_detect_pathology_zones_min_area_reference_uses_provided_pixel_count():
     band = np.full((height, width), 0.6, dtype=np.float32)
     band[40:44, 40:44] = 0.1  # a small, compact 16px blob
 
-    _, count_default = _detect_pathology_zones(band, [0, height])
-    _, count_with_large_reference = _detect_pathology_zones(band, [0, height], min_area_reference_pixels=10_000_000)
+    _, count_default = _detect_pathology_zones(band, [0, height], _dark_mask_fn)
+    _, count_with_large_reference = _detect_pathology_zones(
+        band, [0, height], _dark_mask_fn, min_area_reference_pixels=10_000_000
+    )
 
     assert count_default >= 1
     assert count_with_large_reference == 0

@@ -104,6 +104,21 @@ def flatten_band(gray: np.ndarray, top: np.ndarray, bottom: np.ndarray) -> tuple
     return flat, valid
 
 
+def _row_baseline(flat: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Row-wise brightness baseline at each depth of a flattened tissue band
+    (see flatten_band) -- the local "expected brightness at this depth"
+    reference both dark_mask_in_band and bright_mask_in_band compare each
+    pixel against, factored out so the two share one implementation instead
+    of (as an earlier version had it) two independently-maintained copies of
+    the same row-averaging/smoothing logic that differed only in the final
+    comparison direction.
+    """
+    row_count = valid.sum(axis=1)
+    row_sum = np.where(valid, flat, 0.0).sum(axis=1)
+    row_mean = np.divide(row_sum, row_count, out=np.zeros_like(row_sum), where=row_count > 0)
+    return smooth(row_mean, window=max(3, flat.shape[0] // 20))[:, None]
+
+
 def dark_mask_in_band(flat: np.ndarray, valid: np.ndarray, darkness_offset: float) -> np.ndarray:
     """Boolean mask of pixels in a flattened tissue band (see flatten_band) that
     are notably darker (hyporeflective) than the row-wise brightness baseline
@@ -114,8 +129,16 @@ def dark_mask_in_band(flat: np.ndarray, valid: np.ndarray, darkness_offset: floa
     """
     if not valid.any():
         return np.zeros_like(valid, dtype=bool)
-    row_count = valid.sum(axis=1)
-    row_sum = np.where(valid, flat, 0.0).sum(axis=1)
-    row_mean = np.divide(row_sum, row_count, out=np.zeros_like(row_sum), where=row_count > 0)
-    row_baseline = smooth(row_mean, window=max(3, flat.shape[0] // 20))[:, None]
-    return valid & (flat < (row_baseline - darkness_offset))
+    return valid & (flat < (_row_baseline(flat, valid) - darkness_offset))
+
+
+def bright_mask_in_band(flat: np.ndarray, valid: np.ndarray, brightness_offset: float) -> np.ndarray:
+    """Boolean mask of pixels in a flattened tissue band that are notably
+    brighter (hyperreflective) than the row-wise baseline at that depth --
+    the mirror image of dark_mask_in_band, for pathology categories that
+    present as bright material rather than optically-empty fluid (e.g.
+    subretinal hyperreflective material, see segmentation.py).
+    """
+    if not valid.any():
+        return np.zeros_like(valid, dtype=bool)
+    return valid & (flat > (_row_baseline(flat, valid) + brightness_offset))

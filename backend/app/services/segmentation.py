@@ -40,13 +40,32 @@ if coarse, anatomical distinction rather than an arbitrary one --
 intraretinal fluid/cysts (above the photoreceptor/RPE complex, where cysts
 classically sit in INL/OPL/ONL) versus subretinal fluid (at/below the
 photoreceptor-RPE complex, down to the choroid, where subretinal fluid
-classically pools). Deliberately NOT attempting the reference clinical
-report's other categories yet (epiretinal membrane, RPE detachment, drusen,
-subretinal hyperreflective material) -- those need shape/contour analysis
-of the RPE line rather than a simple darkness threshold, and rushing a
-low-confidence heuristic for something that reads as a specific clinical
-finding is worse than honestly not claiming it yet. Present all of this to
-the user as "algorithm-flagged zones for review", never as a diagnosis.
+classically pools).
+
+A later round adds two more of the reference clinical report's categories,
+each using the same "heuristic on already-tracked structure, not a trained
+classifier" philosophy as the two above:
+
+- Subretinal hyperreflective material: the same anatomical band as
+  subretinal fluid, but flagged by local BRIGHTNESS rather than darkness --
+  SHRM is optically dense material in that same space, the mirror image of
+  fluid's optically-empty darkness.
+- Drusen: flagged not by pixel intensity but by the RPE-choroid boundary
+  ITSELF bulging outward from its own smoothed baseline shape -- drusen are
+  deposits that physically displace that boundary, the same
+  "deviation-from-smoothed-baseline" technique `_detect_fovea_column`
+  already uses for the ILM boundary's single deepest dip, generalized here
+  to flag every sufficiently wide bulge across the scan.
+
+Still deliberately NOT attempting epiretinal membrane or RPE detachment:
+a genuine EPM sits immediately adjacent to the ILM signal this module
+already tracks, at risk of constant false-positives against normal ILM
+brightness; a genuine RPE detachment needs a Bruch's-membrane reference this
+model doesn't track at all, so there is no baseline to measure separation
+against, and rushing a low-confidence heuristic for something that reads as
+a specific clinical finding is worse than honestly not claiming it yet.
+Present all of this to the user as "algorithm-flagged zones for review",
+never as a diagnosis.
 """
 
 from dataclasses import dataclass
@@ -57,7 +76,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from scipy import ndimage
 
-from app.ml.signal_utils import dark_mask_in_band, flatten_band, smooth, tissue_extent
+from app.ml.signal_utils import bright_mask_in_band, dark_mask_in_band, flatten_band, smooth, tissue_extent
 
 # PIL's default bitmap font (used by ImageDraw.text when no font is given) has
 # no Cyrillic glyphs -- every character silently renders as a "tofu" box.
@@ -144,14 +163,19 @@ ASSUMED_UM_PER_PIXEL = 2.0
 
 # Heuristic pathology-zone detection parameters.
 DARKNESS_OFFSET = 0.20  # a zone must be this much darker than the local layer baseline
+BRIGHTNESS_OFFSET = 0.20  # a zone must be this much brighter than the local layer baseline
 MIN_ZONE_AREA_DIVISOR = 3000  # min blob area, as a fraction of the retinal band's pixel count
+DRUSEN_BULGE_OFFSET_FRAC = 0.06  # RPE-choroid boundary must bulge outward by this fraction of the full tissue band height
+DRUSEN_MIN_WIDTH_DIVISOR = 150  # min bulge width, as a fraction of the scan's width
+DRUSEN_MAX_WIDTH_FRAC = 0.3  # a bulge spanning most of the scan is a tracking drift, not a discrete deposit
 
-# Pathology categories (round 37), each keyed to a (start layer boundary, end
-# layer boundary) pair from LAYERS -- see this module's docstring for why only
-# these two of the reference clinical report's categories are attempted so
-# far. Boundary indices are derived from LAYERS itself (not hardcoded
-# integers) so a future reorder/resize of LAYERS can't silently desync these
-# ranges from the layer names they're supposed to track.
+# Pathology categories (round 37 added the first two; a later round added
+# subretinal_hyperreflective_material and drusen), each keyed to a (start
+# layer boundary, end layer boundary) pair from LAYERS where relevant -- see
+# this module's docstring for which categories are attempted and why two
+# still aren't. Boundary indices are derived from LAYERS itself (not
+# hardcoded integers) so a future reorder/resize of LAYERS can't silently
+# desync these ranges from the layer names they're supposed to track.
 #
 # The split point is IS/OS's own top edge, not its bottom: subretinal fluid
 # classically pools between the photoreceptors and RPE, i.e. starting AT the
@@ -161,21 +185,40 @@ MIN_ZONE_AREA_DIVISOR = 3000  # min blob area, as a fraction of the retinal band
 # either category, silently dropping a real hyporeflective zone there from
 # both the report and the UI checklist.
 _INTRARETINAL_SUBRETINAL_SPLIT = LAYERS.index("is_os")
+_RPE_BOTTOM_IDX = LAYERS.index("rpe") + 1  # RPE-choroid boundary, where drusen bulge outward
 PATHOLOGY_LABELS_RU = {
     "intraretinal_fluid": "Интраретинальные кисты / жидкость",
     "subretinal_fluid": "Субретинальная жидкость",
+    "subretinal_hyperreflective_material": "Субретинальный гиперрефлективный материал",
+    "drusen": "Друзы",
 }
 PATHOLOGY_SHORT_LABELS = {
     "intraretinal_fluid": "Интраретинальная жидкость",
     "subretinal_fluid": "Субретинальная жидкость",
+    "subretinal_hyperreflective_material": "Гиперрефлективный материал",
+    "drusen": "Друзы",
 }
 PATHOLOGY_COLORS = {
     "intraretinal_fluid": (70, 170, 255),  # blue, matches the reference report's cyst color
     "subretinal_fluid": (70, 210, 120),  # green, matches the reference report's SRF color
+    "subretinal_hyperreflective_material": (60, 200, 200),  # teal, matches the reference report's SHRM color
+    "drusen": (230, 160, 60),  # orange, matches the reference report's drusen color
+}
+# Detection style per category -- "dark"/"bright" go through the generic
+# intensity-zone detector (_detect_pathology_zones) scoped to the boundary
+# range below; "bulge" goes through the RPE-boundary-deviation detector
+# instead (_detect_drusen_zones), which has no boundary-range slice of its
+# own -- it operates on the already-tracked RPE-choroid curve directly.
+PATHOLOGY_DETECTOR_KIND = {
+    "intraretinal_fluid": "dark",
+    "subretinal_fluid": "dark",
+    "subretinal_hyperreflective_material": "bright",
+    "drusen": "bulge",
 }
 PATHOLOGY_BOUNDARY_RANGES = {
     "intraretinal_fluid": (0, _INTRARETINAL_SUBRETINAL_SPLIT),
     "subretinal_fluid": (_INTRARETINAL_SUBRETINAL_SPLIT, len(LAYERS)),
+    "subretinal_hyperreflective_material": (_INTRARETINAL_SUBRETINAL_SPLIT, len(LAYERS)),
 }
 
 
@@ -353,9 +396,15 @@ def _track_boundaries(gray: np.ndarray) -> np.ndarray:
 
 
 def _detect_pathology_zones(
-    gray: np.ndarray, boundaries, min_area_reference_pixels: int | None = None
+    gray: np.ndarray, boundaries, mask_fn, min_area_reference_pixels: int | None = None
 ) -> tuple[np.ndarray, int]:
-    """`min_area_reference_pixels` lets a caller calibrate the min-blob-size
+    """`mask_fn(flat, valid) -> bool array` picks the intensity test -- darker
+    (fluid/cysts) or brighter (hyperreflective material) than the local
+    baseline, see dark_mask_in_band/bright_mask_in_band in signal_utils.py --
+    so this one blob-extraction/filtering routine serves every intensity-based
+    category instead of being copy-pasted per direction.
+
+    `min_area_reference_pixels` lets a caller calibrate the min-blob-size
     noise filter against a different (typically larger) area than this call's
     own `boundaries` span -- round 37 splits what used to be one call over
     the whole retinal band into several calls over narrower sub-bands, and
@@ -374,8 +423,8 @@ def _detect_pathology_zones(
     if not valid.any():
         return mask, 0
 
-    dark_mask = dark_mask_in_band(flat, valid, DARKNESS_OFFSET)
-    labeled, num_features = ndimage.label(dark_mask)
+    zone_mask = mask_fn(flat, valid)
+    labeled, num_features = ndimage.label(zone_mask)
     area_reference = min_area_reference_pixels if min_area_reference_pixels is not None else int(valid.sum())
     min_area = max(15, area_reference // MIN_ZONE_AREA_DIVISOR)
     max_width = 0.4 * width  # real fluid/cyst pockets are localized blobs, not
@@ -402,15 +451,80 @@ def _detect_pathology_zones(
     return mask, zone_count
 
 
+def _detect_drusen_zones(height: int, boundaries: np.ndarray) -> tuple[np.ndarray, int]:
+    """Flags candidate drusen as localized outward bulges of the tracked
+    RPE-choroid boundary from its own smoothed baseline shape.
+
+    Unlike the fluid/SHRM categories above (flagged by pixel intensity within
+    a fixed band), drusen are deposits that displace the boundary itself, so
+    this compares the already-tracked curve (see _track_boundaries) to a
+    heavily smoothed version of its own shape -- the same
+    deviation-from-smoothed-baseline technique `_detect_fovea_column` already
+    uses for the ILM boundary's single deepest dip, generalized here to flag
+    every sufficiently wide bulge across the scan rather than only the
+    single deepest one.
+
+    `smooth`'s boxcar convolution implicitly zero-pads past the array edges,
+    which drags the smoothed baseline down near columns 0 and width-1
+    regardless of image content, making the real boundary look like it
+    "bulges" above that artificially low baseline -- confirmed empirically
+    (a flat synthetic boundary with no real bulge still fired near both
+    edges, over a span of roughly half the smoothing window). This is the
+    same edge-artifact class `_detect_fovea_column` already excludes by
+    restricting its own search to the central 60% of the scan width; here
+    the margin is tied to the smoothing window itself (the actual source of
+    the artifact) rather than a fixed fraction of width.
+    """
+    width = boundaries.shape[1]
+    boundary = boundaries[_RPE_BOTTOM_IDX]
+    mask = np.zeros((height, width), dtype=bool)
+
+    band_height = float(np.mean(boundaries[-1] - boundaries[0]))
+    if band_height <= 0:
+        return mask, 0
+
+    window = max(5, width // 10)
+    bulge_offset = max(2.0, DRUSEN_BULGE_OFFSET_FRAC * band_height)
+    baseline = smooth(boundary, window=window)
+    deviation = boundary - baseline  # positive = boundary sits deeper (bulges outward)
+    above = deviation > bulge_offset
+    margin = window
+    if 2 * margin < width:
+        above[:margin] = False
+        above[width - margin :] = False
+    else:
+        above[:] = False
+
+    labeled, num_features = ndimage.label(above)
+    min_width = max(2, width // DRUSEN_MIN_WIDTH_DIVISOR)
+    max_width = DRUSEN_MAX_WIDTH_FRAC * width
+
+    zone_count = 0
+    for i in range(1, num_features + 1):
+        cols = np.where(labeled == i)[0]
+        if len(cols) < min_width or len(cols) > max_width:
+            continue
+        for c in cols:
+            lo = int(np.clip(baseline[c] - 3, 0, height))
+            hi = int(np.clip(boundary[c] + 3, 0, height))
+            if hi > lo:
+                mask[lo:hi, c] = True
+        zone_count += 1
+
+    return mask, zone_count
+
+
 def _detect_pathology_findings(
     gray: np.ndarray, boundaries: np.ndarray
 ) -> tuple[list[PathologyFinding], dict[str, np.ndarray]]:
-    """Runs the generic dark-zone detector once per category in
-    PATHOLOGY_BOUNDARY_RANGES, scoped to that category's slice of the
-    round-36 layer boundaries -- see this module's docstring for why this
-    boundary-relative split, not a trained per-category classifier.
+    """Runs the detector appropriate to each category in
+    PATHOLOGY_DETECTOR_KIND -- the generic intensity-zone detector (dark or
+    bright) scoped to that category's slice of the round-36 layer boundaries,
+    or the RPE-boundary-bulge detector for drusen -- see this module's
+    docstring for why these are heuristics on already-tracked structure, not
+    a trained per-category classifier.
     """
-    width = gray.shape[1]
+    height, width = gray.shape
     full_top = np.broadcast_to(np.asarray(boundaries[0], dtype=float), (width,))
     full_bottom = np.broadcast_to(np.asarray(boundaries[-1], dtype=float), (width,))
     _, full_valid = flatten_band(gray, full_top, full_bottom)
@@ -418,10 +532,19 @@ def _detect_pathology_findings(
 
     findings: list[PathologyFinding] = []
     masks: dict[str, np.ndarray] = {}
-    for key, (start_idx, end_idx) in PATHOLOGY_BOUNDARY_RANGES.items():
-        mask, count = _detect_pathology_zones(
-            gray, [boundaries[start_idx], boundaries[end_idx]], min_area_reference_pixels=full_band_pixels
-        )
+    for key, kind in PATHOLOGY_DETECTOR_KIND.items():
+        if kind == "bulge":
+            mask, count = _detect_drusen_zones(height, boundaries)
+        else:
+            start_idx, end_idx = PATHOLOGY_BOUNDARY_RANGES[key]
+            mask_fn = (
+                (lambda flat, valid: dark_mask_in_band(flat, valid, DARKNESS_OFFSET))
+                if kind == "dark"
+                else (lambda flat, valid: bright_mask_in_band(flat, valid, BRIGHTNESS_OFFSET))
+            )
+            mask, count = _detect_pathology_zones(
+                gray, [boundaries[start_idx], boundaries[end_idx]], mask_fn, min_area_reference_pixels=full_band_pixels
+            )
         masks[key] = mask
         findings.append(
             PathologyFinding(

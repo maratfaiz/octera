@@ -7,7 +7,7 @@ vignette column as fully valid tissue -- neither was covered by any test.
 
 import numpy as np
 
-from app.ml.signal_utils import smooth, tissue_extent
+from app.ml.signal_utils import bright_mask_in_band, dark_mask_in_band, smooth, tissue_extent
 
 
 def test_smooth_preserves_length_even_when_window_exceeds_profile_length():
@@ -40,3 +40,42 @@ def test_tissue_extent_finds_a_normal_bright_band():
     # the array edges (an inherent, expected property of convolve, not a bug).
     assert np.all(top[5:-5] < 35)
     assert np.all(bottom[5:-5] > 55)
+
+
+def test_dark_mask_in_band_flags_only_the_darker_patch():
+    height, width = 100, 100
+    flat = np.full((height, width), 0.6, dtype=np.float32)
+    flat[40:60, 40:60] = 0.1  # notably darker than the 0.6 baseline
+    valid = np.ones((height, width), dtype=bool)
+
+    mask = dark_mask_in_band(flat, valid, darkness_offset=0.2)
+
+    assert mask[40:60, 40:60].all()
+    assert not mask[:, :20].any()
+
+
+def test_bright_mask_in_band_flags_only_the_brighter_patch():
+    """bright_mask_in_band is dark_mask_in_band's mirror image (used for
+    subretinal hyperreflective material, which is optically dense/bright
+    rather than optically-empty/dark) -- same baseline logic, opposite
+    comparison direction.
+    """
+    height, width = 100, 100
+    flat = np.full((height, width), 0.3, dtype=np.float32)
+    flat[40:60, 40:60] = 0.9  # notably brighter than the 0.3 baseline
+    valid = np.ones((height, width), dtype=bool)
+
+    mask = bright_mask_in_band(flat, valid, brightness_offset=0.2)
+
+    assert mask[40:60, 40:60].all()
+    assert not mask[:, :20].any()
+
+
+def test_bright_mask_in_band_empty_when_no_valid_pixels():
+    height, width = 10, 10
+    flat = np.zeros((height, width), dtype=np.float32)
+    valid = np.zeros((height, width), dtype=bool)
+
+    mask = bright_mask_in_band(flat, valid, brightness_offset=0.2)
+
+    assert not mask.any()
