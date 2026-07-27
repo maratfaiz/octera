@@ -1,8 +1,10 @@
+import io
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_patient
@@ -15,6 +17,22 @@ from app.schemas.study import StudyRead
 router = APIRouter(prefix="/studies", tags=["studies"])
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/tiff"}
+
+# Maps a PIL-verified image format to the extension used for on-disk storage
+# -- deliberately not derived from the client-supplied filename or
+# Content-Type header, both trivially spoofable. Before this validation, an
+# authenticated user could upload arbitrary bytes (a script, an executable)
+# with a spoofed image Content-Type and an arbitrary filename extension
+# (e.g. "shell.php"), and the server stored + later served them back
+# verbatim: `Image.open(io.BytesIO(contents))` never ran until the ML
+# pipeline itself, so a corrupt/non-image upload only failed much later at
+# analysis time, not at upload time, and the stored extension controlled
+# what Content-Type FileResponse would later serve it back with. Confirmed
+# by uploading non-image bytes as "shell.php" with Content-Type: image/jpeg
+# -- accepted with 201, stored on disk with a .php extension, before this
+# fix. Validating the actual decoded format closes both the spoofable-header
+# gap and the attacker-controlled-extension gap in one place.
+_EXTENSION_BY_FORMAT = {"JPEG": ".jpg", "PNG": ".png", "TIFF": ".tiff"}
 
 
 def _get_own_study(study_id: str, patient: Patient, db: Session) -> Study:
@@ -45,11 +63,25 @@ async def upload_study(
             detail=f"Файл слишком большой. Максимальный размер: {settings.max_upload_size_mb} МБ",
         )
 
+    try:
+        with Image.open(io.BytesIO(contents)) as img:
+            image_format = img.format
+            img.verify()
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Файл повреждён или не является изображением",
+        )
+    if image_format not in _EXTENSION_BY_FORMAT:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Поддерживаются только изображения JPEG, PNG или TIFF",
+        )
+
     storage_dir = Path(settings.storage_dir)
     storage_dir.mkdir(parents=True, exist_ok=True)
 
-    extension = Path(file.filename or "").suffix or ".jpg"
-    filename = f"{uuid.uuid4()}{extension}"
+    filename = f"{uuid.uuid4()}{_EXTENSION_BY_FORMAT[image_format]}"
     destination = storage_dir / filename
     destination.write_bytes(contents)
 
