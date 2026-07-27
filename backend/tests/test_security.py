@@ -112,6 +112,30 @@ def test_upload_derives_extension_from_actual_content_not_filename(client):
     assert resp.json()["image_path"].endswith(".jpg")
 
 
+def test_register_rejects_password_shorter_than_8_chars(client):
+    """Regression test: an earlier version had no server-side password
+    length constraint at all -- the registration form's own `minLength={8}`
+    is client-side only. Confirmed exploitable by calling the API directly:
+    registering with password="a" was accepted (201) and created a real
+    account before this fix.
+    """
+    resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": "weakpass@example.com", "full_name": "Weak Pass", "password": "a"},
+    )
+
+    assert resp.status_code == 422
+
+
+def test_register_accepts_password_of_exactly_8_chars(client):
+    resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": "eightchars@example.com", "full_name": "Eight Chars", "password": "abcdefgh"},
+    )
+
+    assert resp.status_code == 201
+
+
 def test_production_config_rejects_default_secret(monkeypatch):
     insecure = Settings(environment="production", secret_key="change-me-in-production")
     monkeypatch.setattr(config, "settings", insecure)
