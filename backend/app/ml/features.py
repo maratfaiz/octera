@@ -7,6 +7,17 @@ Two feature groups are concatenated:
    raw pixel intensities -- on this dataset it roughly halved the DME false-
    alarm rate versus raw pixels (see the model card / commit history). It is a
    classic, CPU-cheap strong feature for medical-image texture.
+
+   HOG_SIZE was rechecked in round 59: a cross-validation-only sweep across
+   {32, 48, 64, 96, 128} looked like a clean, monotonic win for larger sizes,
+   but the honest 5-seed held-out multi-seed evaluation (the same protocol
+   every other shipping decision in this project uses) told a different
+   story at HOG_SIZE=96 on the real production recipe: accuracy was flat-to-
+   down in 4/5 seeds, and DME precision was down in 5/5 seeds (mean 0.890 vs
+   0.933 at HOG_SIZE=64) -- a real, consistent regression the CV-only sweep
+   completely missed. Not shipped; kept at 64. This is a concrete example of
+   why this project never ships on cross-validation or a single split alone
+   -- see README round 59.
 2. Domain features derived from the same signal analysis the segmentation
    module uses. Diabetic macular edema is, by definition, retinal thickening
    plus fluid pockets, so features that measure the retinal band's extent and
