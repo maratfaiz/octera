@@ -197,6 +197,34 @@ def test_register_rejects_password_shorter_than_8_chars(client):
     assert resp.status_code == 422
 
 
+def test_register_rejects_password_over_bcrypt_byte_limit(client):
+    """Regression test: bcrypt (via passlib's CryptContext) silently
+    truncates at 72 bytes -- everything past that is ignored during both
+    hashing and verification, so two different passwords sharing the same
+    first 72 bytes hash identically and either one logs in. Confirmed
+    directly against app.core.security: hash_password("a"*72 + "tail1")
+    verifies True against "a"*72 + "tail2". There was no server-side upper
+    bound on password length before this fix -- only a Pydantic max_length
+    would catch this at the API boundary, and it must count encoded UTF-8
+    bytes, not characters (this UI is Russian; Cyrillic is 2 bytes/char).
+    """
+    resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": "toolong@example.com", "full_name": "Too Long", "password": "a" * 73},
+    )
+
+    assert resp.status_code == 422
+
+
+def test_register_accepts_password_at_exactly_bcrypt_byte_limit(client):
+    resp = client.post(
+        "/api/v1/auth/register",
+        json={"email": "atlimit@example.com", "full_name": "At Limit", "password": "a" * 72},
+    )
+
+    assert resp.status_code == 201
+
+
 def test_register_accepts_password_of_exactly_8_chars(client):
     resp = client.post(
         "/api/v1/auth/register",
