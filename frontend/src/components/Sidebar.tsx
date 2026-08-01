@@ -6,11 +6,12 @@ import { usePathname, useRouter } from "next/navigation";
 import { auth, clearToken } from "@/lib/api";
 import type { User } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
-import { ClockIcon, HomeIcon, LogOutIcon, MenuIcon, PlusIcon, UserIcon, WaveLogoIcon } from "@/components/icons";
+import { ClockIcon, HomeIcon, LockIcon, LogOutIcon, MenuIcon, PlusIcon, UserIcon, WaveLogoIcon } from "@/components/icons";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Новый ОКТ", icon: PlusIcon, isActive: (path: string) => path === "/dashboard" },
   { href: "/history", label: "История", icon: ClockIcon, isActive: (path: string) => path === "/history" || path.startsWith("/studies") },
+  { href: "/settings", label: "Настройки", icon: LockIcon, isActive: (path: string) => path === "/settings" },
 ];
 
 export function Sidebar() {

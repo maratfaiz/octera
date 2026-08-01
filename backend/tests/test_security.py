@@ -234,6 +234,84 @@ def test_register_accepts_password_of_exactly_8_chars(client):
     assert resp.status_code == 201
 
 
+def test_change_password_succeeds_and_new_password_works_for_login(client):
+    client.post(
+        "/api/v1/auth/register",
+        json={"email": "changeme@example.com", "full_name": "Change Me", "password": "old-password"},
+    )
+    login = client.post("/api/v1/auth/login", json={"email": "changeme@example.com", "password": "old-password"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    resp = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "old-password", "new_password": "new-password"},
+        headers=headers,
+    )
+    assert resp.status_code == 204
+
+    old_login = client.post("/api/v1/auth/login", json={"email": "changeme@example.com", "password": "old-password"})
+    assert old_login.status_code == 401
+
+    new_login = client.post("/api/v1/auth/login", json={"email": "changeme@example.com", "password": "new-password"})
+    assert new_login.status_code == 200
+
+
+def test_change_password_rejects_wrong_current_password_without_expiring_session(client):
+    """Regression test: the endpoint must not return 401 for a wrong current
+    password. frontend/src/lib/api.ts's request() treats ANY 401 response
+    carrying a token as "session expired" and force-clears the token +
+    redirects to /login -- correct everywhere else, where 401 can only mean
+    an invalid/expired JWT, but wrong here: the token is perfectly valid,
+    the user just mistyped their current password. A 401 would incorrectly
+    log out an authenticated user over a typo (and the still-valid token
+    proves the session itself was never actually invalid).
+    """
+    client.post(
+        "/api/v1/auth/register",
+        json={"email": "wrongcurrent@example.com", "full_name": "Wrong Current", "password": "correct-password"},
+    )
+    login = client.post(
+        "/api/v1/auth/login", json={"email": "wrongcurrent@example.com", "password": "correct-password"}
+    )
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    resp = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "totally-wrong", "new_password": "new-password"},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+    still_works = client.post(
+        "/api/v1/auth/login", json={"email": "wrongcurrent@example.com", "password": "correct-password"}
+    )
+    assert still_works.status_code == 200
+
+
+def test_change_password_rejects_short_new_password(client):
+    client.post(
+        "/api/v1/auth/register",
+        json={"email": "shortnew@example.com", "full_name": "Short New", "password": "password123"},
+    )
+    login = client.post("/api/v1/auth/login", json={"email": "shortnew@example.com", "password": "password123"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    resp = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "password123", "new_password": "short"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_change_password_requires_authentication(client):
+    resp = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "whatever", "new_password": "new-password"},
+    )
+    assert resp.status_code == 401
+
+
 def test_production_config_rejects_default_secret(monkeypatch):
     insecure = Settings(environment="production", secret_key="change-me-in-production")
     monkeypatch.setattr(config, "settings", insecure)
