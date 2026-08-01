@@ -110,6 +110,55 @@ a {
   font-size: 15px;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 27, 45, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 50;
+}
+
+.modal-card {
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 20px 48px rgba(15, 27, 45, 0.24);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.modal-title {
+  font-size: 17px;
+  font-weight: 800;
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--ink-faint);
+  padding: 4px;
+  font-size: 18px;
+  display: flex;
+}
+
+.modal-close:hover:not(:disabled) {
+  color: var(--ink-soft);
+  transform: none;
+  background: none;
+}
+
 input,
 select {
   background: #fbfcfd;
@@ -386,7 +435,18 @@ button.secondary:hover:not(:disabled) {
   align-items: center;
   gap: 10px;
   font-size: 13px;
+  font-weight: 600;
   color: var(--sidebar-text);
+  text-decoration: none;
+  border-radius: 10px;
+  margin: -6px -8px;
+  padding: 6px 8px;
+  transition: background 0.12s ease;
+}
+
+.sidebar-account:hover,
+.sidebar-account.active {
+  background: var(--sidebar-hover-bg);
 }
 
 .sidebar-avatar {

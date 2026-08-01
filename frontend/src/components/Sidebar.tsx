@@ -6,12 +6,13 @@ import { usePathname, useRouter } from "next/navigation";
 import { auth, clearToken } from "@/lib/api";
 import type { User } from "@/lib/types";
 import { APP_VERSION } from "@/lib/version";
-import { ClockIcon, HomeIcon, LockIcon, LogOutIcon, MenuIcon, PlusIcon, UserIcon, WaveLogoIcon } from "@/components/icons";
+import { ClockIcon, HomeIcon, LogOutIcon, MenuIcon, PlusIcon, UserIcon, WaveLogoIcon } from "@/components/icons";
 
+// Settings isn't a peer of these content tabs -- it's reached through the
+// account row in the footer below (see .sidebar-account), not listed here.
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Новый ОКТ", icon: PlusIcon, isActive: (path: string) => path === "/dashboard" },
   { href: "/history", label: "История", icon: ClockIcon, isActive: (path: string) => path === "/history" || path.startsWith("/studies") },
-  { href: "/settings", label: "Настройки", icon: LockIcon, isActive: (path: string) => path === "/settings" },
 ];
 
 export function Sidebar() {
@@ -70,16 +71,14 @@ export function Sidebar() {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="sidebar-account">
+          <Link href="/settings" className={`sidebar-account ${pathname === "/settings" ? "active" : ""}`}>
             <span className="sidebar-avatar">{initial}</span>
-            <div>
-              <div>{user?.full_name ?? "…"}</div>
-              <button className="sidebar-logout" onClick={handleLogout}>
-                <LogOutIcon />
-                Выйти
-              </button>
-            </div>
-          </div>
+            <div>{user?.full_name ?? "…"}</div>
+          </Link>
+          <button className="sidebar-logout" onClick={handleLogout}>
+            <LogOutIcon />
+            Выйти
+          </button>
           <div className="sidebar-version">OCTera v{APP_VERSION}</div>
         </div>
       </aside>
@@ -125,16 +124,14 @@ export function Sidebar() {
             })}
           </nav>
           <div className="sidebar-footer" style={{ border: "none", padding: 0 }}>
-            <div className="sidebar-account">
+            <Link href="/settings" className={`sidebar-account ${pathname === "/settings" ? "active" : ""}`}>
               <span className="sidebar-avatar">{initial}</span>
-              <div>
-                <div>{user?.full_name ?? "…"}</div>
-                <button className="sidebar-logout" onClick={handleLogout}>
-                  <LogOutIcon />
-                  Выйти
-                </button>
-              </div>
-            </div>
+              <div>{user?.full_name ?? "…"}</div>
+            </Link>
+            <button className="sidebar-logout" onClick={handleLogout}>
+              <LogOutIcon />
+              Выйти
+            </button>
             <div className="sidebar-version">OCTera v{APP_VERSION}</div>
           </div>
         </div>

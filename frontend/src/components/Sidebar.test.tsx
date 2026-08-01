@@ -38,6 +38,17 @@ describe("Sidebar", () => {
     await waitFor(() => expect(screen.getByText("Anna Test")).toBeInTheDocument());
   });
 
+  it("links the account row to /settings (settings is reached via the account, not a separate nav item)", async () => {
+    const { container } = render(<Sidebar />);
+    await waitFor(() => expect(screen.getByText("Anna Test")).toBeInTheDocument());
+
+    const desktopAccount = container.querySelector(".sidebar .sidebar-account");
+    expect(desktopAccount).toHaveAttribute("href", "/settings");
+
+    const desktopNav = within(container.querySelector(".sidebar") as HTMLElement);
+    expect(desktopNav.queryByText("Настройки")).not.toBeInTheDocument();
+  });
+
   it("opens the mobile menu panel from the hamburger button and closes it from the Профиль tab", async () => {
     render(<Sidebar />);
     await waitFor(() => expect(screen.getByText("Anna Test")).toBeInTheDocument());

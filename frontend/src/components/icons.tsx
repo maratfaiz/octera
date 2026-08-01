@@ -196,6 +196,10 @@ export function UserIcon(props: IconProps) {
   );
 }
 
+export function CloseIcon(props: IconProps) {
+  return base(<path d="M18 6 6 18M6 6l12 12" />, props);
+}
+
 export function ArrowLeftIcon(props: IconProps) {
   return base(<path d="M19 12H5M11 6l-6 6 6 6" />, props);
 }
