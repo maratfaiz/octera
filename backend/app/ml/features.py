@@ -1,6 +1,6 @@
 """Turns a raw OCT image into a fixed-size feature vector for the classifier.
 
-Two feature groups are concatenated:
+Three feature groups are concatenated:
 
 1. HOG (Histogram of Oriented Gradients) over the image resized to 64x64.
    HOG captures the layered/edge texture of a retinal B-scan far better than
@@ -24,15 +24,31 @@ Two feature groups are concatenated:
    the amount of locally dark (hyporeflective) tissue give the classifier the
    clinically relevant signal directly. On their own they don't beat pixels,
    but combined with HOG they add a small, measured gain.
+3. Simple LBP (Local Binary Pattern, P=8/R=1, uniform method, 10-bin
+   histogram) over the full-resolution grayscale image -- a second, cheaper
+   texture descriptor than HOG, computed at native resolution rather than
+   HOG's 64x64 resize. Added in round 67 after an unusual finding: at the
+   raw 0.5 decision cutoff, LBP shows a real (5-seed-consistent, not noise)
+   paired trade-off -- DME precision down, recall up -- rather than a clean
+   win. But this project's shipped threshold is never the raw 0.5 cutoff; it
+   is a separately out-of-fold-tuned operating point (see
+   app/services/report_generator.py's DME_SCREENING_THRESHOLD). Re-running
+   the same threshold-tuning procedure on the LBP-enhanced features showed
+   the raw-cutoff trade-off was misleading: at matched recall (0.951, the
+   same 39/41 DME cases caught), LBP's own tuned high-recall threshold cuts
+   false positives by a third (6 vs. 9 out of 194 NORMAL scans) versus the
+   HOG+domain-only baseline at its own tuned threshold -- a genuine gain,
+   not a rediscovery of what threshold-tuning already provided. See README
+   round 67.
 
-Both groups are computed here (no file I/O, no side effects) so training and
-inference always see the exact same representation.
+All three groups are computed here (no file I/O, no side effects) so
+training and inference always see the exact same representation.
 """
 
 import numpy as np
 from PIL import Image
 from scipy import ndimage
-from skimage.feature import hog
+from skimage.feature import hog, local_binary_pattern
 
 from app.ml.signal_utils import dark_mask_in_band, flatten_band, smooth, tissue_extent
 
@@ -40,6 +56,13 @@ HOG_SIZE = 64
 
 # Kept in sync with app/services/segmentation.py's darkness heuristic.
 _DARKNESS_OFFSET = 0.20
+
+
+def _lbp_features(gray: np.ndarray) -> np.ndarray:
+    gray_uint8 = (np.clip(gray, 0, 1) * 255).astype(np.uint8)
+    lbp = local_binary_pattern(gray_uint8, 8, 1, method="uniform")
+    hist, _ = np.histogram(lbp, bins=10, range=(0, 10), density=True)
+    return hist.astype(np.float32)
 
 
 def _domain_features(gray: np.ndarray) -> np.ndarray:
@@ -102,4 +125,4 @@ def _hog_features(gray: np.ndarray) -> np.ndarray:
 
 def extract_features(image: Image.Image) -> np.ndarray:
     gray = np.asarray(image.convert("L"), dtype=np.float32) / 255.0
-    return np.concatenate([_hog_features(gray), _domain_features(gray)])
+    return np.concatenate([_hog_features(gray), _domain_features(gray), _lbp_features(gray)])
