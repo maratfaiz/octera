@@ -72,6 +72,19 @@ async def upload_study(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="Файл повреждён или не является изображением",
         )
+    except Image.DecompressionBombError:
+        # Pillow raises this from Image.open() itself (before img.verify()) when the
+        # declared pixel count exceeds 2x Image.MAX_IMAGE_PIXELS -- independent of the
+        # file's byte size, so the 20MB cap above doesn't guard against it. It's a plain
+        # Exception subclass, not OSError, so it falls through the except above uncaught
+        # and used to surface as an unhandled 500 instead of a clean validation error
+        # (reproduced with a ~246KB flat 15000x15000 PNG). Same 415 as any other
+        # unusable upload -- an oversized-pixel-dimension image is as unusable to the
+        # ML pipeline as a corrupt one.
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Файл повреждён или не является изображением",
+        )
     if image_format not in _EXTENSION_BY_FORMAT:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,

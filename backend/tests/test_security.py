@@ -33,6 +33,44 @@ def test_rate_limit_resets_between_tests(client):
     assert resp.status_code == 201
 
 
+def test_rate_limit_prunes_stale_ip_entries(monkeypatch):
+    """Regression test: `_attempts` is a module-level dict keyed by
+    `key_prefix:client_ip`. An earlier version only ever wrote back the
+    *current* key's filtered attempts, so a client IP's entry, once
+    created, stayed in the dict forever -- even after every one of its
+    attempts had aged out of the window -- since nothing else ever revisited
+    it. Over the life of a long-running process handling many distinct
+    client IPs, this is an unbounded memory leak. Confirmed directly against
+    the module's internal state: two IPs make one attempt each, time is
+    advanced past the window, and a third IP's request should sweep both
+    stale entries away rather than leaving them to accumulate forever.
+    """
+    from app.core import rate_limit as rate_limit_module
+
+    rate_limit_module.reset_rate_limits()
+    dependency = rate_limit_module.rate_limit("probe", max_attempts=5, window_seconds=60)
+
+    class _FakeClient:
+        def __init__(self, host: str) -> None:
+            self.host = host
+
+    class _FakeRequest:
+        def __init__(self, host: str) -> None:
+            self.client = _FakeClient(host)
+
+    fake_now = 1_000_000.0
+    monkeypatch.setattr(rate_limit_module.time, "time", lambda: fake_now)
+
+    dependency(_FakeRequest("1.1.1.1"))
+    dependency(_FakeRequest("2.2.2.2"))
+    assert set(rate_limit_module._attempts.keys()) == {"probe:1.1.1.1", "probe:2.2.2.2"}
+
+    fake_now += 61  # past the 60s window -- both entries are now stale
+    dependency(_FakeRequest("3.3.3.3"))
+
+    assert set(rate_limit_module._attempts.keys()) == {"probe:3.3.3.3"}
+
+
 def test_upload_rejects_oversized_file(client, monkeypatch):
     monkeypatch.setattr("app.api.routes.studies.settings.max_upload_size_mb", 0)
 
@@ -78,6 +116,38 @@ def test_upload_rejects_non_image_bytes_with_spoofed_content_type(client):
     resp = client.post(
         "/api/v1/studies?eye=OD",
         files={"file": ("shell.php", io.BytesIO(malicious_bytes), "image/jpeg")},
+        headers=headers,
+    )
+
+    assert resp.status_code == 415
+
+
+def test_upload_rejects_decompression_bomb(client):
+    """Regression test: Pillow raises Image.DecompressionBombError from
+    Image.open() itself once the declared pixel count exceeds
+    2 * Image.MAX_IMAGE_PIXELS -- independent of the file's byte size, so the
+    max_upload_size_mb check above doesn't catch it. DecompressionBombError
+    is a plain Exception subclass, not OSError, so an earlier version of the
+    except clause (UnidentifiedImageError, OSError) let it fall through
+    uncaught and surface as an unhandled 500 instead of the intended 415. A
+    flat, highly-compressible image is enough to trigger it well under the
+    20MB size cap.
+    """
+    client.post(
+        "/api/v1/auth/register",
+        json={"email": "bomb@example.com", "full_name": "Decompression Bomb", "password": "password123"},
+    )
+    login = client.post("/api/v1/auth/login", json={"email": "bomb@example.com", "password": "password123"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    img = Image.new("L", (15000, 15000), color=128)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    resp = client.post(
+        "/api/v1/studies?eye=OD",
+        files={"file": ("scan.png", buf, "image/png")},
         headers=headers,
     )
 
