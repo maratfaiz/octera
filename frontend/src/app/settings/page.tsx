@@ -169,7 +169,6 @@ function PasswordChangeModal({ onClose, onSuccess }: { onClose: () => void; onSu
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 minLength={8}
-                maxLength={72}
                 required
                 autoComplete="new-password"
               />
@@ -185,7 +184,6 @@ function PasswordChangeModal({ onClose, onSuccess }: { onClose: () => void; onSu
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 minLength={8}
-                maxLength={72}
                 required
                 autoComplete="new-password"
               />
