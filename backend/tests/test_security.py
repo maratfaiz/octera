@@ -304,6 +304,30 @@ def test_change_password_rejects_short_new_password(client):
     assert resp.status_code == 422
 
 
+def test_change_password_rejects_new_password_over_bcrypt_byte_limit(client):
+    """Regression test: PasswordChange.new_password reuses the same
+    _reject_password_over_bcrypt_byte_limit validator as UserCreate.password
+    (see schemas/user.py) -- but only the registration call site had a test
+    guarding it. A future refactor of PasswordChange that dropped or
+    misattached the validator would silently reopen the bcrypt 72-byte
+    truncation bug (see test_register_rejects_password_over_bcrypt_byte_limit)
+    for the change-password path specifically, with nothing to catch it.
+    """
+    client.post(
+        "/api/v1/auth/register",
+        json={"email": "changetoolong@example.com", "full_name": "Change Too Long", "password": "old-password"},
+    )
+    login = client.post("/api/v1/auth/login", json={"email": "changetoolong@example.com", "password": "old-password"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    resp = client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": "old-password", "new_password": "a" * 73},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
 def test_change_password_requires_authentication(client):
     resp = client.post(
         "/api/v1/auth/change-password",
