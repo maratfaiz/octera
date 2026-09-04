@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_patient
@@ -11,6 +12,7 @@ from app.models.patient import Patient
 from app.models.study import Study
 from app.schemas.analysis import AnalysisResultRead, AnalysisSummary
 from app.services.pipeline import run_analysis_pipeline
+from app.services.report_generator import resolve_flagged_diagnosis
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -28,7 +30,7 @@ def list_analysis_history(
     patient: Patient = Depends(get_current_patient),
 ) -> list[AnalysisSummary]:
     results = (
-        db.query(AnalysisResult)
+        db.query(AnalysisResult, Study.eye)
         .join(Study, Study.id == AnalysisResult.study_id)
         .filter(Study.patient_id == patient.id)
         .order_by(AnalysisResult.created_at.asc())
@@ -39,9 +41,13 @@ def list_analysis_history(
             study_id=r.study_id,
             created_at=r.created_at,
             quality_score=r.quality_score,
-            top_diagnosis=r.diagnoses[0] if r.diagnoses else None,
+            # Matches generate_report's DME-screening logic (see report_generator.py)
+            # so a study flagged in its detail report isn't shown as unremarkable here.
+            top_diagnosis=resolve_flagged_diagnosis(r.diagnoses),
+            layer_thickness=r.layer_thickness,
+            eye=eye,
         )
-        for r in results
+        for r, eye in results
     ]
 
 
@@ -52,6 +58,18 @@ def run_analysis(
     patient: Patient = Depends(get_current_patient),
 ) -> AnalysisResult:
     study = _get_own_study(study_id, patient, db)
+
+    # AnalysisResult.study_id is unique -- without this check, a double-submit
+    # (double-click, browser retry, a stray duplicate request) would run the
+    # whole pipeline a second time and then fail at the DB insert with an
+    # unhandled IntegrityError, leaving `study.status` stuck at "processing"
+    # forever (the study page just shows an indefinite "waiting" state, no
+    # retry or timeout) instead of a clean, actionable error.
+    if db.query(AnalysisResult).filter(AnalysisResult.study_id == study.id).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Анализ уже выполнен для этого исследования",
+        )
 
     study.status = "processing"
     db.commit()
@@ -68,8 +86,21 @@ def run_analysis(
 
     result = AnalysisResult(study_id=study.id, **pipeline_output)
     db.add(result)
-    study.status = "completed"
-    db.commit()
+    try:
+        study.status = "completed"
+        db.commit()
+    except IntegrityError:
+        # Narrows the window the check above can't close on its own: two
+        # truly concurrent requests can both pass the check before either
+        # commits. Same clean 409 instead of an unhandled 500 + a study
+        # stuck in "processing".
+        db.rollback()
+        study.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Анализ уже выполнен для этого исследования",
+        )
     db.refresh(result)
     return result
 

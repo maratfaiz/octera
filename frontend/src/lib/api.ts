@@ -38,6 +38,18 @@ class ApiError extends Error {
   }
 }
 
+// FastAPI's own validation errors (422) send `detail` as an array of
+// {loc, msg, type} objects rather than a string -- passed through unchecked,
+// Error's string coercion turns that into an unreadable "[object Object]".
+function extractErrorMessage(detail: unknown): string | undefined {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map((d) => (d && typeof d === "object" && "msg" in d ? String(d.msg) : String(d)));
+    return messages.length > 0 ? messages.join("; ") : undefined;
+  }
+  return undefined;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers = new Headers(options.headers);
@@ -48,8 +60,17 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
   if (!res.ok) {
+    // Only treat a 401 as "your session expired" when a token was actually
+    // sent and rejected -- auth.login/auth.register are called with no
+    // token yet (the user isn't authenticated at all), so a 401 there means
+    // "wrong password"/"invalid credentials", not an expired session, and
+    // must not force-redirect a user who's already sitting on /login.
+    if (res.status === 401 && token) {
+      clearToken();
+      if (typeof window !== "undefined") window.location.href = "/login";
+    }
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.detail ?? `Ошибка запроса: ${res.status}`);
+    throw new ApiError(res.status, extractErrorMessage(body.detail) ?? `Ошибка запроса: ${res.status}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -70,6 +91,11 @@ export const auth = {
     return data;
   },
   me: () => request<User>("/api/v1/auth/me"),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>("/api/v1/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
 };
 
 export const studies = {
@@ -94,7 +120,13 @@ export async function fetchImageObjectUrl(path: string): Promise<string> {
   const headers = new Headers();
   if (token) headers.set("Authorization", `Bearer ${token}`);
   const res = await fetch(`${API_URL}${path}`, { headers });
-  if (!res.ok) throw new ApiError(res.status, "Не удалось загрузить изображение");
+  if (!res.ok) {
+    if (res.status === 401 && token) {
+      clearToken();
+      if (typeof window !== "undefined") window.location.href = "/login";
+    }
+    throw new ApiError(res.status, "Не удалось загрузить изображение");
+  }
   const blob = await res.blob();
   return URL.createObjectURL(blob);
 }

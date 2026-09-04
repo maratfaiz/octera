@@ -5,6 +5,15 @@ pydantic==2.9.2
 email-validator==2.2.0
 pydantic-settings==2.5.2
 python-jose[cryptography]==3.3.0
+# Pinned explicitly, not left as an implicit transitive dep of `cryptography`
+# above: this environment has twice lost `cffi` across a container restart
+# (present after `pip install`, gone after the container came back), which
+# breaks every JWT-touching import (`cryptography.hazmat.bindings._rust`
+# panics with pyo3_runtime.PanicException at import time) -- i.e. the entire
+# auth surface, not just tests. An explicit line in requirements.txt survives
+# a restart that only replays this file rather than a full dependency
+# resolution.
+cffi==2.1.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 python-multipart==0.0.9

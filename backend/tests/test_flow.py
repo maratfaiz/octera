@@ -83,10 +83,34 @@ def test_analysis_history_lists_own_results_only(client):
     assert len(history) == 1
     assert history[0]["study_id"] == study_id
     assert "top_diagnosis" in history[0]
+    # _upload_test_study always uploads with ?eye=OD -- lets the frontend split
+    # trend charts by eye instead of mixing OD/OS measurements into one line.
+    assert history[0]["eye"] == "OD"
 
     resp_b = client.get("/api/v1/analysis", headers=headers_b)
     assert resp_b.status_code == 200
     assert resp_b.json() == []
+
+
+def test_running_analysis_twice_on_the_same_study_returns_a_clean_conflict(client):
+    """Regression test: without a pre-existing-result check, a second /run
+    call used to re-run the whole pipeline and then fail at the DB insert
+    with an unhandled IntegrityError (AnalysisResult.study_id is unique),
+    leaving the study stuck in "processing" forever with no clean error --
+    the study page has no retry/timeout, it would just wait indefinitely.
+    """
+    headers = _register_and_login(client, email="double_run@example.com")
+    study_resp = _upload_test_study(client, headers)
+    study_id = study_resp.json()["id"]
+
+    first = client.post(f"/api/v1/analysis/{study_id}/run", headers=headers)
+    assert first.status_code == 201
+
+    second = client.post(f"/api/v1/analysis/{study_id}/run", headers=headers)
+    assert second.status_code == 409
+
+    study = client.get(f"/api/v1/studies/{study_id}", headers=headers)
+    assert study.json()["status"] == "completed"
 
 
 def test_users_cannot_access_each_others_studies(client):
